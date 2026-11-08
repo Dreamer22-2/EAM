@@ -16,23 +16,23 @@
 
         <nav class="navigation">
           <a class="navigation-link" href="#uj-bevezetes" data-page="entry">
-            <img class="navigation-icon navigation-icon--image" src="/assets/add-icon.svg" alt="" aria-hidden="true" />
+            <img class="navigation-icon navigation-icon--image" src="/assets/icons/add-plus-circle-svgrepo-com.svg" alt="" aria-hidden="true" />
             <span>Új bevezetés</span>
           </a>
           <a class="navigation-link" href="#leltar" data-page="inventory">
-            <img class="navigation-icon navigation-icon--image" src="/assets/list-icon.svg" alt="" aria-hidden="true" />
+            <img class="navigation-icon navigation-icon--image" src="/assets/icons/columns-3-2-svgrepo-com.svg" alt="" aria-hidden="true" />
             <span>Leltár</span>
           </a>
           <a class="navigation-link" href="#importalas" data-page="import">
-            <span class="navigation-icon navigation-icon--upload" aria-hidden="true">↑</span>
+            <img class="navigation-icon navigation-icon--image" src="/assets/icons/upload-svgrepo-com.svg" alt="" aria-hidden="true" />
             <span>Importálás</span>
           </a>
           <a class="navigation-link" href="#matricainator" data-page="labels">
-            <img class="navigation-icon navigation-icon--image" src="/assets/sticker-icon.svg" alt="" aria-hidden="true" />
+            <img class="navigation-icon navigation-icon--image" src="/assets/icons/sticker-svgrepo-com(2).svg" alt="" aria-hidden="true" />
             <span>Matricainátor</span>
           </a>
           <a class="navigation-link" href="#parameterek" data-page="parameters">
-            <span class="navigation-icon navigation-icon--settings" aria-hidden="true">⚙</span>
+            <img class="navigation-icon navigation-icon--image" src="/assets/icons/settings-svgrepo-com.svg" alt="" aria-hidden="true" />
             <span>Paraméterek</span>
           </a>
         </nav>
@@ -183,7 +183,7 @@
             </div>
 
             <div class="form-actions">
-              <button type="submit" id="save-button">Mentés</button>
+              <button type="submit" id="save-button"><img class="button-icon" src="/assets/icons/diskette-svgrepo-com.svg" alt="" aria-hidden="true" />Mentés</button>
               <p id="form-status" class="form-status" role="status" aria-live="polite"></p>
             </div>
           </form>
@@ -192,7 +192,7 @@
         <section class="inventory-page inventory-page--table" id="leltar" hidden>
           <div class="page-heading">
             <h1>LELTÁR</h1>
-            <button type="button" id="refresh-inventory" class="secondary-button">Frissítés</button>
+            <button type="button" id="refresh-inventory" class="secondary-button"><img class="button-icon" src="/assets/icons/update-svgrepo-com.svg" alt="" aria-hidden="true" />Frissítés</button>
           </div>
 
           <div class="inventory-toolbar">
@@ -217,8 +217,8 @@
               <select id="inventory-manufacturer-filter"><option value="">Mindegyik</option></select>
             </label>
             <div class="inventory-filter-actions">
-              <button type="button" id="apply-inventory-filters">Szűrők alkalmazása</button>
-              <button type="button" id="clear-inventory-filters" class="secondary-button">Szűrők törlése</button>
+              <button type="button" id="apply-inventory-filters"><img class="button-icon" src="/assets/icons/filter-svgrepo-com.svg" alt="" aria-hidden="true" />Szűrők alkalmazása</button>
+              <button type="button" id="clear-inventory-filters" class="secondary-button"><img class="button-icon" src="/assets/icons/eraser-4-svgrepo-com.svg" alt="" aria-hidden="true" />Szűrők törlése</button>
             </div>
           </div>
 
@@ -233,11 +233,21 @@
                   <th>Sorozatszám(ok)</th>
                   <th>Tárolás helye, módja</th>
                   <th>Megjegyzés</th>
+                  <th>Műveletek</th>
                 </tr>
               </thead>
               <tbody id="inventory-body"></tbody>
             </table>
           </div>
+        </section>
+
+        <section class="inventory-page inventory-detail-page" id="inventory-detail" hidden>
+          <div class="page-heading">
+            <button type="button" id="back-to-inventory" class="secondary-button">← Vissza a leltárhoz</button>
+            <h1>LELTÁRI TÉTEL</h1>
+          </div>
+
+          <div id="inventory-detail-content"></div>
         </section>
 
         <section class="inventory-page import-page" id="importalas" hidden>
@@ -268,14 +278,14 @@
             </div>
             <div id="import-mapping" class="import-mapping"></div>
             <div class="form-actions">
-              <button type="button" id="import-preview-button">Előnézet frissítése</button>
+              <button type="button" id="import-preview-button"><img class="button-icon" src="/assets/icons/update-svgrepo-com.svg" alt="" aria-hidden="true" />Előnézet frissítése</button>
             </div>
           </div>
 
           <div id="import-preview-card" class="import-card" hidden>
             <div class="page-heading">
               <h2>Importálási előnézet</h2>
-              <button type="button" id="import-confirm-button">Importálás Firestore-ba</button>
+              <button type="button" id="import-confirm-button"><img class="button-icon" src="/assets/icons/upload-svgrepo-com.svg" alt="" aria-hidden="true" />Importálás Firestore-ba</button>
             </div>
             <p id="import-preview-status" class="form-status" role="status" aria-live="polite"></p>
             <div class="table-wrapper">
@@ -296,22 +306,22 @@
               <div class="parameter-card">
                 <h3>Tulajdonos</h3>
                 <div id="parameter-owner" class="parameter-entry-list"></div>
-                <button type="button" class="secondary-button parameter-add" data-catalog="owner">+ Új tulajdonos</button>
+                <button type="button" class="secondary-button parameter-add" data-catalog="owner"><img class="button-icon" src="/assets/icons/add-plus-circle-svgrepo-com.svg" alt="" aria-hidden="true" />Új tulajdonos</button>
               </div>
               <div class="parameter-card">
                 <h3>Eszköztípus</h3>
                 <div id="parameter-deviceType" class="parameter-entry-list"></div>
-                <button type="button" class="secondary-button parameter-add" data-catalog="deviceType">+ Új eszköztípus</button>
+                <button type="button" class="secondary-button parameter-add" data-catalog="deviceType"><img class="button-icon" src="/assets/icons/add-plus-circle-svgrepo-com.svg" alt="" aria-hidden="true" />Új eszköztípus</button>
               </div>
               <div class="parameter-card">
                 <h3>Gyártó / márka</h3>
                 <div id="parameter-manufacturer" class="parameter-entry-list"></div>
-                <button type="button" class="secondary-button parameter-add" data-catalog="manufacturer">+ Új gyártó</button>
+                <button type="button" class="secondary-button parameter-add" data-catalog="manufacturer"><img class="button-icon" src="/assets/icons/add-plus-circle-svgrepo-com.svg" alt="" aria-hidden="true" />Új gyártó</button>
               </div>
               <div class="parameter-card">
                 <h3>Típus</h3>
                 <div id="parameter-model" class="parameter-entry-list"></div>
-                <button type="button" class="secondary-button parameter-add" data-catalog="model">+ Új típus</button>
+                <button type="button" class="secondary-button parameter-add" data-catalog="model"><img class="button-icon" src="/assets/icons/add-plus-circle-svgrepo-com.svg" alt="" aria-hidden="true" />Új típus</button>
               </div>
             </div>
           </div>
@@ -335,22 +345,51 @@
               <div>
                 <h3>Első számjegy</h3>
                 <div id="parameter-split-first" class="parameter-entry-list"></div>
-                <button type="button" class="secondary-button parameter-add-digit" data-digit="first">+ Bejegyzés</button>
+                <button type="button" class="secondary-button parameter-add-digit" data-digit="first"><img class="button-icon" src="/assets/icons/add-plus-circle-svgrepo-com.svg" alt="" aria-hidden="true" />Bejegyzés</button>
               </div>
               <div>
                 <h3>Második számjegy</h3>
                 <div id="parameter-split-second" class="parameter-entry-list"></div>
-                <button type="button" class="secondary-button parameter-add-digit" data-digit="second">+ Bejegyzés</button>
+                <button type="button" class="secondary-button parameter-add-digit" data-digit="second"><img class="button-icon" src="/assets/icons/add-plus-circle-svgrepo-com.svg" alt="" aria-hidden="true" />Bejegyzés</button>
               </div>
             </div>
           </div>
 
           <div class="form-actions parameter-actions">
-            <button type="button" id="save-parameters">Paraméterek mentése</button>
+            <button type="button" id="save-parameters"><img class="button-icon" src="/assets/icons/diskette-svgrepo-com.svg" alt="" aria-hidden="true" />Paraméterek mentése</button>
             <p id="parameter-status" class="form-status" role="status" aria-live="polite"></p>
           </div>
         </section>
       </main>
+    </div>
+
+    <div id="inventory-edit-modal" class="custom-modal" hidden>
+      <div class="custom-modal-card" role="dialog" aria-modal="true" aria-labelledby="inventory-edit-title">
+        <h2 id="inventory-edit-title">Leltári tétel szerkesztése</h2>
+        <form id="inventory-edit-form" class="custom-modal-form">
+          <label>Név<input name="name" required /></label>
+          <label>Egységérték<input name="price" type="number" min="0" step="0.01" /></label>
+          <label>Pénznem<select name="currency"><option value="HUF">HUF</option><option value="EUR">EUR</option><option value="USD">USD</option></select></label>
+          <p id="inventory-edit-huf-value" class="currency-conversion" hidden></p>
+          <label>Tárolás helye, módja<textarea name="placement" rows="3"></textarea></label>
+          <label>Megjegyzés<textarea name="comment" rows="3"></textarea></label>
+          <div class="custom-modal-actions">
+            <button type="button" id="cancel-inventory-edit" class="secondary-button">Mégse</button>
+            <button type="submit"><img class="button-icon" src="/assets/icons/diskette-svgrepo-com.svg" alt="" aria-hidden="true" />Mentés</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div id="inventory-confirm-modal" class="custom-modal" hidden>
+      <div class="custom-modal-card" role="alertdialog" aria-modal="true" aria-labelledby="inventory-confirm-title">
+        <h2 id="inventory-confirm-title">Törlés megerősítése</h2>
+        <p id="inventory-confirm-message"></p>
+        <div class="custom-modal-actions">
+          <button type="button" id="cancel-inventory-delete" class="secondary-button">Mégse</button>
+          <button type="button" id="confirm-inventory-delete" class="danger-button"><img class="button-icon" src="/assets/icons/delete-alt-svgrepo-com.svg" alt="" aria-hidden="true" />Törlés</button>
+        </div>
+      </div>
     </div>
 
     <dialog id="edit-dialog">
@@ -362,8 +401,8 @@
         <label>Tárolás helye, módja<textarea name="placement" rows="3"></textarea></label>
         <label>Megjegyzés<textarea name="comment" rows="3"></textarea></label>
         <div class="dialog-actions">
-          <button type="button" id="cancel-edit" class="secondary-button">Mégse</button>
-          <button type="submit">Mentés</button>
+          <button type="button" id="cancel-edit" class="secondary-button"><img class="button-icon" src="/assets/icons/eraser-4-svgrepo-com.svg" alt="" aria-hidden="true" />Mégse</button>
+          <button type="submit"><img class="button-icon" src="/assets/icons/diskette-svgrepo-com.svg" alt="" aria-hidden="true" />Mentés</button>
         </div>
       </form>
     </dialog>

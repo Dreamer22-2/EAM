@@ -602,6 +602,17 @@ const inventoryModelFilter = document.querySelector("#inventory-model-filter");
 const inventoryManufacturerFilter = document.querySelector("#inventory-manufacturer-filter");
 const applyInventoryFilters = document.querySelector("#apply-inventory-filters");
 const clearInventoryFilters = document.querySelector("#clear-inventory-filters");
+const inventoryDetail = document.querySelector("#inventory-detail");
+const inventoryDetailContent = document.querySelector("#inventory-detail-content");
+const backToInventory = document.querySelector("#back-to-inventory");
+const inventoryEditModal = document.querySelector("#inventory-edit-modal");
+const inventoryEditForm = document.querySelector("#inventory-edit-form");
+const inventoryEditHufValue = document.querySelector("#inventory-edit-huf-value");
+const cancelInventoryEdit = document.querySelector("#cancel-inventory-edit");
+const inventoryConfirmModal = document.querySelector("#inventory-confirm-modal");
+const inventoryConfirmMessage = document.querySelector("#inventory-confirm-message");
+const cancelInventoryDelete = document.querySelector("#cancel-inventory-delete");
+const confirmInventoryDelete = document.querySelector("#confirm-inventory-delete");
 const editDialog = document.querySelector("#edit-dialog");
 const editForm = document.querySelector("#edit-form");
 const inventoryState = {
@@ -644,6 +655,16 @@ const importPreviewHead = document.querySelector("#import-preview-head");
 const importPreviewBody = document.querySelector("#import-preview-body");
 const importPreviewButton = document.querySelector("#import-preview-button");
 const importConfirmButton = document.querySelector("#import-confirm-button");
+
+function createIconButtonContent(button, iconPath, label) {
+  const icon = document.createElement("img");
+  icon.className = "button-icon";
+  icon.src = iconPath;
+  icon.alt = "";
+  icon.setAttribute("aria-hidden", "true");
+  button.replaceChildren(icon);
+  button.append(label);
+}
 
 function setImportStatus(message, type = "") {
   importFileStatus.textContent = message;
@@ -1143,6 +1164,7 @@ function updateHufValue() {
     : mnbHufRates[currencyInput.value] == null
       ? "Nem sikerült lekérni az élő adatokat."
       : formatCurrency(value * mnbHufRates[currencyInput.value], "HUF");
+  updateInventoryEditHufValue();
 }
 
 updateExchangeRateText();
@@ -1171,21 +1193,135 @@ function renderInventory() {
   inventoryBody.replaceChildren();
   groups.forEach((group) => {
     const row = document.createElement("tr");
+    row.dataset.inventoryGroup = "true";
+    row.tabIndex = 0;
+    row.setAttribute("role", "button");
+    row.setAttribute("aria-label", `${group.name || "Leltári tétel"} részleteinek megnyitása`);
     appendCell(row, group.name);
     appendCell(row, formatCounterRange(group.items));
     appendCell(row, formatCurrency(group.price, group.currency || "HUF"));
     appendCell(row, group.items.map((item) => item.serialNumber || "—").join(", "));
     appendCell(row, group.placement);
     appendCell(row, group.comment);
+    const actions = document.createElement("td");
+    const actionGroup = document.createElement("div");
+    actionGroup.className = "row-actions";
+    actionGroup.append(createIconAction("edit-alt-2-svgrepo-com.svg", "Szerkesztés", () => openInventoryEdit(group)));
+    actionGroup.append(createIconAction("delete-alt-svgrepo-com.svg", "Törlés", () => requestInventoryDelete(group), true));
+    actions.append(actionGroup);
+    row.append(actions);
+    const openDetails = () => openInventoryDetail(group);
+    row.addEventListener("click", openDetails);
+    row.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        openDetails();
+      }
+    });
     inventoryBody.append(row);
   });
   if (!groups.length) {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
-    cell.colSpan = 6;
+    cell.colSpan = 7;
     cell.textContent = "Nincs megjeleníthető leltári tétel.";
     row.append(cell);
     inventoryBody.append(row);
+  }
+}
+
+function createIconAction(iconName, label, handler, danger = false) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `icon-action${danger ? " icon-action--danger" : ""}`;
+  button.title = label;
+  button.setAttribute("aria-label", label);
+  const icon = document.createElement("img");
+  icon.className = "button-icon";
+  icon.src = `/assets/icons/${iconName}`;
+  icon.alt = "";
+  icon.setAttribute("aria-hidden", "true");
+  button.append(icon);
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    handler();
+  });
+  return button;
+}
+
+function openInventoryEdit(group) {
+  inventoryState.editing = group;
+  inventoryEditForm.elements.name.value = group.name || "";
+  inventoryEditForm.elements.price.value = group.price ?? "";
+  inventoryEditForm.elements.currency.value = group.currency || "HUF";
+  inventoryEditForm.elements.placement.value = group.placement || "";
+  inventoryEditForm.elements.comment.value = group.comment || "";
+  updateInventoryEditHufValue();
+  inventoryEditModal.hidden = false;
+  inventoryEditForm.elements.name.focus();
+}
+
+function updateInventoryEditHufValue() {
+  const value = Number(inventoryEditForm.elements.price.value);
+  const currency = inventoryEditForm.elements.currency.value;
+  const isForeignCurrency = currency !== "HUF";
+  inventoryEditHufValue.hidden = !isForeignCurrency;
+  if (!isForeignCurrency || !Number.isFinite(value)) {
+    inventoryEditHufValue.textContent = "";
+    return;
+  }
+  const rate = mnbHufRates[currency];
+  inventoryEditHufValue.textContent = rate == null
+    ? "HUF-ban: Nem sikerült lekérni az élő adatokat."
+    : `HUF-ban: ${formatCurrency(value * rate, "HUF")}`;
+}
+
+function closeInventoryEdit() {
+  inventoryEditModal.hidden = true;
+  inventoryState.editing = null;
+}
+
+function requestInventoryDelete(target, singleItem = false) {
+  const items = singleItem ? [target] : target.items;
+  inventoryState.pendingDelete = { target, items, singleItem };
+  inventoryConfirmMessage.textContent = singleItem
+    ? `Biztosan törlöd a(z) ${target.code} leltári tételt?`
+    : `Biztosan törlöd mind a ${items.length} tételt ebből a csoportból?`;
+  inventoryConfirmModal.hidden = false;
+  confirmInventoryDelete.focus();
+}
+
+async function deleteInventoryItems(items) {
+  const byParent = new Map();
+  items.forEach((item) => {
+    if (!byParent.has(item.parentRef.path)) byParent.set(item.parentRef.path, { ref: item.parentRef, items: [] });
+    byParent.get(item.parentRef.path).items.push(item);
+  });
+  await Promise.all([...byParent.values()].map(({ ref, items: parentItems }) => runTransaction(db, async (transaction) => {
+    const updates = {};
+    parentItems.forEach((item) => {
+      updates[`sorszamok.${item.counter}`] = deleteField();
+    });
+    transaction.update(ref, updates);
+  })));
+}
+
+async function confirmInventoryDeletion() {
+  const pending = inventoryState.pendingDelete;
+  if (!pending) return;
+  confirmInventoryDelete.disabled = true;
+  try {
+    await deleteInventoryItems(pending.items);
+    inventoryConfirmModal.hidden = true;
+    inventoryState.pendingDelete = null;
+    await loadInventory();
+    if (!inventoryDetail.hidden) showInventoryPage();
+  } catch (error) {
+    console.error("Leltári tétel törlési hiba:", error);
+    inventoryStatus.textContent = "A tétel törlése nem sikerült.";
+    inventoryStatus.className = "form-status form-status--error";
+  } finally {
+    confirmInventoryDelete.disabled = false;
   }
 }
 
@@ -1198,6 +1334,151 @@ function openEditDialog(item) {
   editForm.elements.comment.value = item.comment || "";
   editDialog.showModal();
 }
+
+function appendDetailField(container, label, value) {
+  const field = document.createElement("div");
+  field.className = "inventory-detail-field";
+  const title = document.createElement("dt");
+  title.textContent = label;
+  const content = document.createElement("dd");
+  content.textContent = value || "—";
+  field.append(title, content);
+  container.append(field);
+}
+
+function openInventoryDetail(group) {
+  const detailItems = group.items
+    .slice()
+    .sort((left, right) => Number(left.counter) - Number(right.counter));
+  inventoryDetailContent.replaceChildren();
+
+  const surface = document.createElement("div");
+  surface.className = "inventory-detail-surface";
+  const heading = document.createElement("h2");
+  heading.className = "inventory-detail-heading";
+  heading.textContent = group.name || "Névtelen leltári tétel";
+
+  const fields = document.createElement("dl");
+  fields.className = "inventory-detail-grid";
+  appendDetailField(fields, "Leltári szám", formatCounterRange(detailItems));
+  appendDetailField(fields, "Tulajdonos", catalogs.owner.find(([code]) => code === group.parts.owner)?.[1] || group.parts.owner);
+  appendDetailField(fields, "Eszköztípus", catalogs.deviceType.find(([code]) => code === group.parts.deviceType)?.[1] || group.parts.deviceType);
+  appendDetailField(fields, "Gyártó/márka", catalogs.manufacturer.find(([code]) => code === group.parts.manufacturer)?.[1] || group.parts.manufacturer);
+  appendDetailField(fields, "Típus", catalogs.model.find(([code]) => code === group.parts.model)?.[1] || group.parts.model);
+  appendDetailField(fields, "Egységérték", formatCurrency(group.price, group.currency || "HUF"));
+  appendDetailField(fields, "Tárolás helye, módja", group.placement);
+  appendDetailField(fields, "Megjegyzés", group.comment);
+  const detailActions = document.createElement("div");
+  detailActions.className = "detail-actions";
+  detailActions.append(createIconAction("edit-alt-2-svgrepo-com.svg", "Szerkesztés", () => openInventoryEdit(group)));
+  detailActions.append(createIconAction("delete-alt-svgrepo-com.svg", "Csoport törlése", () => requestInventoryDelete(group), true));
+
+  const tableWrapper = document.createElement("div");
+  tableWrapper.className = "table-wrapper";
+  const table = document.createElement("table");
+  table.className = "inventory-table inventory-detail-items";
+  const head = document.createElement("thead");
+  const headerRow = document.createElement("tr");
+  const hasSerialNumbers = detailItems.some((item) => {
+    const serialNumber = String(item.serialNumber || "").trim();
+    return serialNumber && serialNumber !== "-" && serialNumber !== "—";
+  });
+  ["Leltári szám", ...(hasSerialNumbers ? ["Sorozatszám(ok)"] : [])].forEach((label) => {
+    const cell = document.createElement("th");
+    cell.textContent = label;
+    headerRow.append(cell);
+  });
+  head.append(headerRow);
+  const body = document.createElement("tbody");
+  detailItems.forEach((item) => {
+    const row = document.createElement("tr");
+    appendCell(row, item.code);
+    if (hasSerialNumbers) appendCell(row, item.serialNumber || "—");
+    const actions = document.createElement("td");
+    actions.append(createIconAction("delete-alt-svgrepo-com.svg", "Tétel törlése", () => requestInventoryDelete(item, true), true));
+    row.append(actions);
+    body.append(row);
+  });
+  const actionsHeader = document.createElement("th");
+  actionsHeader.textContent = "Műveletek";
+  headerRow.append(actionsHeader);
+  table.append(head, body);
+  tableWrapper.append(table);
+  surface.append(heading, fields, detailActions, tableWrapper);
+  inventoryDetailContent.append(surface);
+
+  document.querySelectorAll(".inventory-page").forEach((section) => {
+    section.hidden = section !== inventoryDetail;
+  });
+  window.history.replaceState(null, "", "#leltar-reszletek");
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function showInventoryPage() {
+  inventoryDetail.hidden = true;
+  document.querySelector("#leltar").hidden = false;
+  window.history.replaceState(null, "", "#leltar");
+}
+
+backToInventory.addEventListener("click", showInventoryPage);
+cancelInventoryEdit.addEventListener("click", closeInventoryEdit);
+inventoryEditForm.elements.price.addEventListener("input", updateInventoryEditHufValue);
+inventoryEditForm.elements.currency.addEventListener("change", updateInventoryEditHufValue);
+cancelInventoryDelete.addEventListener("click", () => {
+  inventoryConfirmModal.hidden = true;
+  inventoryState.pendingDelete = null;
+});
+confirmInventoryDelete.addEventListener("click", confirmInventoryDeletion);
+
+inventoryEditForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const group = inventoryState.editing;
+  if (!group) return;
+  const updates = {
+    name: inventoryEditForm.elements.name.value.trim(),
+    price: inventoryEditForm.elements.price.value === "" ? null : Number(inventoryEditForm.elements.price.value),
+    currency: inventoryEditForm.elements.currency.value,
+    placement: inventoryEditForm.elements.placement.value.trim(),
+    comment: inventoryEditForm.elements.comment.value.trim(),
+  };
+  try {
+    await runTransaction(db, async (transaction) => {
+      const byParent = new Map();
+      group.items.forEach((item) => {
+        if (!byParent.has(item.parentRef.path)) byParent.set(item.parentRef.path, { ref: item.parentRef, items: [] });
+        byParent.get(item.parentRef.path).items.push(item);
+      });
+      byParent.forEach(({ ref, items }) => {
+        const changes = {};
+        items.forEach((item) => {
+          changes[`sorszamok.${item.counter}`] = {
+            leltariSzam: item.code,
+            alTipus: item.alTipus || "",
+            name: updates.name,
+            price: updates.price,
+            currency: updates.currency,
+            serialNumber: item.serialNumber || "",
+            placement: updates.placement,
+            comment: updates.comment,
+            letrehozva: item.letrehozva || serverTimestamp(),
+          };
+        });
+        transaction.update(ref, changes);
+      });
+    });
+    closeInventoryEdit();
+    await loadInventory();
+    if (!inventoryDetail.hidden) {
+      const updatedGroup = groupInventoryItems(inventoryState.items)
+        .find((item) => item.codePrefix === group.codePrefix && item.name === updates.name);
+      if (updatedGroup) openInventoryDetail(updatedGroup);
+    }
+  } catch (error) {
+    console.error("Leltári csoport módosítási hiba:", error);
+    inventoryStatus.textContent = "A tétel módosítása nem sikerült.";
+    inventoryStatus.className = "form-status form-status--error";
+  }
+});
 
 editForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -1271,7 +1552,8 @@ function createParameterEntry([code, label], onChange) {
   labelInput.ariaLabel = "Megnevezés";
   const remove = document.createElement("button");
   remove.type = "button";
-  remove.textContent = "×";
+  createIconButtonContent(remove, "/assets/icons/delete-alt-svgrepo-com.svg", "");
+  remove.setAttribute("aria-label", "Törlés");
   remove.title = "Törlés";
   remove.addEventListener("click", () => {
     row.remove();
@@ -1280,7 +1562,8 @@ function createParameterEntry([code, label], onChange) {
   const handle = document.createElement("button");
   handle.type = "button";
   handle.className = "parameter-drag-handle";
-  handle.textContent = "⋮⋮";
+  createIconButtonContent(handle, "/assets/icons/drag-handle-svgrepo-com.svg", "");
+  handle.setAttribute("aria-label", "Átrendezés");
   handle.title = "Húzd az elem átrendezéséhez";
   handle.draggable = true;
   [codeInput, labelInput].forEach((input) => input.addEventListener("input", onChange));
@@ -1417,7 +1700,7 @@ function renderParameterRule() {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "secondary-button parameter-add-rule";
-    button.textContent = "+ Altípus";
+    createIconButtonContent(button, "/assets/icons/add-plus-circle-svgrepo-com.svg", "Altípus");
     button.addEventListener("click", () => {
       subtypeRules[model].push(["", ""]);
       renderParameterRule();
