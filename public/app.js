@@ -1267,9 +1267,24 @@ function createIconAction(iconName, label, handler, danger = false) {
   return button;
 }
 
+function populateInventoryEditCatalog(select, catalogKey) {
+  select.replaceChildren();
+  catalogs[catalogKey].forEach(([code, label]) => {
+    select.append(new Option(label, code));
+  });
+}
+
+["owner", "deviceType", "manufacturer", "model"].forEach((catalogKey) => {
+  populateInventoryEditCatalog(inventoryEditForm.elements[catalogKey], catalogKey);
+});
+
 function openInventoryEdit(group) {
   inventoryState.editing = group;
   inventoryEditForm.elements.name.value = group.name || "";
+  inventoryEditForm.elements.owner.value = group.parts.owner;
+  inventoryEditForm.elements.deviceType.value = group.parts.deviceType;
+  inventoryEditForm.elements.manufacturer.value = group.parts.manufacturer;
+  inventoryEditForm.elements.model.value = group.parts.model;
   inventoryEditForm.elements.price.value = group.price ?? "";
   inventoryEditForm.elements.currency.value = group.currency || "HUF";
   inventoryEditForm.elements.placement.value = group.placement || "";
@@ -1454,6 +1469,10 @@ inventoryEditForm.addEventListener("submit", async (event) => {
   if (!group) return;
   const updates = {
     name: inventoryEditForm.elements.name.value.trim(),
+    owner: inventoryEditForm.elements.owner.value,
+    deviceType: inventoryEditForm.elements.deviceType.value,
+    manufacturer: inventoryEditForm.elements.manufacturer.value,
+    model: inventoryEditForm.elements.model.value,
     price: inventoryEditForm.elements.price.value === "" ? null : Number(inventoryEditForm.elements.price.value),
     currency: inventoryEditForm.elements.currency.value,
     placement: inventoryEditForm.elements.placement.value.trim(),
@@ -1461,39 +1480,90 @@ inventoryEditForm.addEventListener("submit", async (event) => {
   };
   try {
     await runTransaction(db, async (transaction) => {
-      const byParent = new Map();
+      const oldInventoryRef = group.parentRef;
+      const newPrefix = `${updates.owner}${updates.deviceType}-${updates.manufacturer}-${updates.model}${group.parts.subtype}`;
+      const newInventoryRef = doc(db, "eszkozok", newPrefix);
+      const oldSnapshot = await transaction.get(oldInventoryRef);
+      const newSnapshot = oldInventoryRef.path === newInventoryRef.path
+        ? oldSnapshot
+        : await transaction.get(newInventoryRef);
+      const oldItems = oldSnapshot.exists() ? oldSnapshot.data().sorszamok || {} : {};
+      const newItems = newSnapshot.exists() ? newSnapshot.data().sorszamok || {} : {};
+      const groupCounters = new Set(group.items.map((item) => item.counter));
+      const hasCollision = Object.keys(newItems).some((counter) => (
+        !groupCounters.has(counter) && newPrefix !== group.codePrefix
+      ));
+      if (hasCollision) {
+        throw new Error("A módosított kódhoz már tartozik egy másik leltári tétel ugyanazzal a sorszámmal.");
+      }
+      const newCounterPrefix = `${updates.owner}${updates.deviceType}-${updates.manufacturer}-${updates.model}`;
+      const newCounterRef = doc(db, "leltariSzamlalok", newCounterPrefix);
+      const counterSnapshot = await transaction.get(newCounterRef);
+      const existingNext = counterSnapshot.exists() ? Number(counterSnapshot.data().kovetkezo) || 0 : 0;
+      const highestGroupCounter = Math.max(...group.items.map((item) => Number(item.counter)));
+
+      const updatedItems = {};
       group.items.forEach((item) => {
-        if (!byParent.has(item.parentRef.path)) byParent.set(item.parentRef.path, { ref: item.parentRef, items: [] });
-        byParent.get(item.parentRef.path).items.push(item);
+        updatedItems[item.counter] = {
+          leltariSzam: `${newPrefix}-${item.counter}`,
+          alTipus: item.alTipus || "",
+          name: updates.name,
+          price: updates.price,
+          currency: updates.currency,
+          serialNumber: item.serialNumber || "",
+          placement: updates.placement,
+          comment: updates.comment,
+          letrehozva: item.letrehozva || serverTimestamp(),
+        };
       });
-      byParent.forEach(({ ref, items }) => {
-        const changes = {};
-        items.forEach((item) => {
-          changes[`sorszamok.${item.counter}`] = {
-            leltariSzam: item.code,
-            alTipus: item.alTipus || "",
-            name: updates.name,
-            price: updates.price,
-            currency: updates.currency,
-            serialNumber: item.serialNumber || "",
-            placement: updates.placement,
-            comment: updates.comment,
-            letrehozva: item.letrehozva || serverTimestamp(),
-          };
+
+      if (newPrefix === group.codePrefix) {
+        transaction.update(oldInventoryRef, {
+          sorszamok: { ...oldItems, ...updatedItems },
+          leltariSzamPrefix: newPrefix,
+          frissitve: serverTimestamp(),
         });
-        transaction.update(ref, changes);
-      });
+      } else {
+        const remainingOldItems = { ...oldItems };
+        group.items.forEach((item) => {
+          delete remainingOldItems[item.counter];
+        });
+        const mergedNewItems = { ...newItems, ...updatedItems };
+        if (Object.keys(remainingOldItems).length) {
+          transaction.update(oldInventoryRef, {
+            sorszamok: remainingOldItems,
+            frissitve: serverTimestamp(),
+          });
+        } else {
+          transaction.delete(oldInventoryRef);
+        }
+        transaction.set(newInventoryRef, {
+          leltariSzamPrefix: newPrefix,
+          sorszamok: mergedNewItems,
+          frissitve: serverTimestamp(),
+        }, { merge: true });
+      }
+
+      transaction.set(newCounterRef, {
+        prefix: newCounterPrefix,
+        kovetkezo: Math.max(existingNext, highestGroupCounter + 1),
+        frissitve: serverTimestamp(),
+      }, { merge: true });
     });
     closeInventoryEdit();
     await loadInventory();
     if (!inventoryDetail.hidden) {
-      const updatedGroup = groupInventoryItems(inventoryState.items)
-        .find((item) => item.codePrefix === group.codePrefix && item.name === updates.name);
+      const updatedGroup = groupInventoryItems(inventoryState.items).find((item) => (
+        item.codePrefix === `${updates.owner}${updates.deviceType}-${updates.manufacturer}-${updates.model}${group.parts.subtype}`
+          && item.name === updates.name
+      ));
       if (updatedGroup) openInventoryDetail(updatedGroup);
     }
   } catch (error) {
     console.error("Leltári csoport módosítási hiba:", error);
-    inventoryStatus.textContent = "A tétel módosítása nem sikerült.";
+    inventoryStatus.textContent = error instanceof Error && error.message.includes("már tartozik")
+      ? error.message
+      : "A tétel módosítása nem sikerült.";
     inventoryStatus.className = "form-status form-status--error";
   }
 });
