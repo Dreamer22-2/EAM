@@ -900,9 +900,15 @@ async function importRowsToFirestore() {
     });
     for (const [prefix, items] of grouped) {
       const inventoryRef = doc(db, "eszkozok", prefix);
+      const counterPrefix = getCounterPrefixFromInventoryCode(items[0].code);
+      const counterRef = doc(db, "leltariSzamlalok", counterPrefix);
       await runTransaction(db, async (transaction) => {
         const snapshot = await transaction.get(inventoryRef);
+        const counterSnapshot = await transaction.get(counterRef);
         const existingItems = snapshot.exists() ? snapshot.data().sorszamok || {} : {};
+        const currentNext = counterSnapshot.exists() ? Number(counterSnapshot.data().kovetkezo) || 0 : 0;
+        const highestImportedCounter = Math.max(...items.map((item) => Number(item.counter)));
+        const nextCounter = Math.max(currentNext, highestImportedCounter + 1);
         const importedItems = { ...existingItems };
         items.forEach((item) => {
           importedItems[item.counter] = {
@@ -922,6 +928,11 @@ async function importRowsToFirestore() {
           sorszamok: importedItems,
           frissitve: serverTimestamp(),
         }, { merge: true });
+        transaction.set(counterRef, {
+          prefix: counterPrefix,
+          kovetkezo: nextCounter,
+          frissitve: serverTimestamp(),
+        }, { merge: true });
       });
     }
     importPreviewStatus.textContent = `${importState.previewRows.length} sor sikeresen importálva.`;
@@ -938,6 +949,13 @@ async function importRowsToFirestore() {
 
 function getInventoryCodePrefix(code, fallback) {
   return code?.replace(/-\d{2,3}$/, "") || fallback;
+}
+
+function getCounterPrefixFromInventoryCode(code) {
+  const segments = String(code || "").split("-");
+  if (segments.length < 3) return getInventoryCodePrefix(code, "");
+  const modelAndSubtype = segments[2];
+  return `${segments[0]}-${segments[1]}-${modelAndSubtype.slice(0, 2)}`;
 }
 
 function getOwnerDeviceParts(combinedCode) {
