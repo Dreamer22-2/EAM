@@ -5,8 +5,10 @@ import {
   doc,
   deleteField,
   getFirestore,
+  getDoc,
   getDocs,
   runTransaction,
+  setDoc,
   serverTimestamp,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 
@@ -35,6 +37,22 @@ if (isEmulator) {
   connectFirestoreEmulator(db, emulatorHost, 8080);
   console.info(`Firestore emulator: ${emulatorHost}:8080`);
 }
+
+function parseCurrencyValue(value) {
+  const normalized = String(value || "")
+    .replace(/[^\d,.-]/g, "")
+    .replace(",", ".");
+  const number = Number(normalized);
+  return Number.isFinite(number) && number >= 0 ? number : null;
+}
+
+const mnbHufRates = {
+  EUR: null,
+  USD: null,
+};
+const exchangeRateEndpoint = window.EAM_EXCHANGE_RATE_ENDPOINT || "";
+const eurRateText = document.querySelector("#eur-rate");
+const usdRateText = document.querySelector("#usd-rate");
 
 const catalogs = {
   owner: [
@@ -201,9 +219,66 @@ const subtypeFirst = document.querySelector("#subtype-first");
 const subtypeSecond = document.querySelector("#subtype-second");
 const subtypeCustom = document.querySelector("#subtype-custom");
 const serialInputs = document.querySelector("#serial-inputs");
+const quantityInput = document.querySelector("#quantity");
+const stickerCountInput = document.querySelector("#sticker-count");
+const unitValueInput = document.querySelector("#unit-value");
+const currencyInput = document.querySelector("#currency");
+const hufValueRow = document.querySelector("#huf-value-row");
+const hufValueInput = document.querySelector("#huf-value");
+const defaultInventoryPreview = "XXX-00-XX00-00";
+const maximumQuantity = 99;
+const maximumGeneratedSerialInputs = 1000;
+const parameterDocument = doc(db, "beallitasok", "parameterek");
+
+function normalizeParameterEntries(entries) {
+  if (!Array.isArray(entries)) return [];
+  return entries.map((entry) => Array.isArray(entry)
+    ? entry
+    : [String(entry.code || ""), String(entry.label || "")]);
+}
+
+function serializeParameterEntries(entries) {
+  return entries.map(([code, label]) => ({ code, label }));
+}
+
+async function loadParameterConfig() {
+  const snapshot = await getDoc(parameterDocument);
+  if (!snapshot.exists()) {
+    return;
+  }
+  const saved = snapshot.data();
+  for (const key of Object.keys(catalogs)) {
+    if (Array.isArray(saved.catalogs?.[key])) {
+      catalogs[key] = normalizeParameterEntries(saved.catalogs[key]);
+    }
+  }
+  if (saved.subtypeRules && typeof saved.subtypeRules === "object") {
+    Object.keys(subtypeRules).forEach((key) => delete subtypeRules[key]);
+    Object.entries(saved.subtypeRules).forEach(([key, entries]) => {
+      subtypeRules[key] = normalizeParameterEntries(entries);
+    });
+  }
+  if (saved.splitSubtypeRules && typeof saved.splitSubtypeRules === "object") {
+    Object.keys(splitSubtypeRules).forEach((key) => delete splitSubtypeRules[key]);
+    Object.entries(saved.splitSubtypeRules).forEach(([key, rule]) => {
+      splitSubtypeRules[key] = {
+        first: normalizeParameterEntries(rule.first),
+        second: normalizeParameterEntries(rule.second),
+      };
+    });
+  }
+}
+
+try {
+  await loadParameterConfig();
+} catch (error) {
+  console.error("Paraméterek betöltési hiba:", error);
+}
 
 function populateSelect(id, catalog) {
   const select = document.querySelector(`#${id}`);
+  const placeholder = select.options[0];
+  select.replaceChildren(placeholder);
   for (const [code, label] of catalog) {
     const option = document.createElement("option");
     option.value = code;
@@ -270,10 +345,17 @@ subtypeCustom.addEventListener("blur", () => {
   if (/^\d$/.test(subtypeCustom.value)) {
     subtypeCustom.value = subtypeCustom.value.padStart(2, "0");
   }
+  updateInventoryPreview();
 });
 
+subtypeCustom.addEventListener("input", updateInventoryPreview);
+
 function updateSerialInputs() {
-  const quantity = Number(document.querySelector("#quantity").value) || 1;
+  const requestedQuantity = Number(quantityInput.value);
+  const quantity = Math.min(
+    Number.isFinite(requestedQuantity) && requestedQuantity > 0 ? requestedQuantity : 1,
+    maximumGeneratedSerialInputs,
+  );
   serialInputs.replaceChildren();
 
   for (let index = 0; index < quantity; index += 1) {
@@ -288,6 +370,13 @@ function updateSerialInputs() {
 }
 
 updateSerialInputs();
+
+stickerCountInput.addEventListener("input", () => {
+  const value = Number(stickerCountInput.value);
+  if (Number.isFinite(value) && value > 10) {
+    stickerCountInput.value = "10";
+  }
+});
 
 function showStatus(message, type) {
   statusMessage.textContent = message;
@@ -335,7 +424,10 @@ function getFormData() {
     gyartoMarka: data.get("manufacturer") || "00",
     tipus: data.get("model") || "00",
     alTipus,
-    egysegErtek: data.get("unitValue") ? Number(data.get("unitValue")) : null,
+    egysegErtek: parseCurrencyValue(data.get("unitValue")),
+    penznem: data.get("currency") || "HUF",
+    matricakSzama: Number(data.get("stickerCount")) || 0,
+    matricaMeret: data.get("stickerSize") || "big",
     sorozatszamok: data.getAll("serialNumbers").map((value) => value.trim()).filter(Boolean),
     tarolasHelyeModja: data.get("storage").trim(),
     megjegyzes: data.get("notes").trim(),
@@ -344,15 +436,25 @@ function getFormData() {
 }
 
 function updateInventoryPreview() {
-  const data = getFormData();
-  const hasRequiredCodes = data.tulajdonos && data.eszkozTipus;
-  const quantity = data.darabszam || 1;
+  const data = new FormData(form);
+  const owner = data.get("owner") || "X";
+  const deviceType = data.get("deviceType") || "XX";
+  const manufacturer = data.get("manufacturer") || "00";
+  const model = data.get("model") || "XX";
+  const subtypeValue = data.get("model") && splitSubtypeRules[data.get("model")]
+    ? normalizeSubtype(
+      data.get("model"),
+      data.get("subtypeFirst"),
+      data.get("subtypeSecond"),
+    )
+    : data.get("subtype") === "custom"
+      ? normalizeCustomSubtype(data.get("subtypeCustom") || "00")
+      : data.get("subtype") || "00";
+  const quantity = Number(data.get("quantity")) || 1;
   const suffix = quantity === 1
     ? "01"
-    : `[00-${String(quantity - 1).padStart(2, "0")}]`;
-  inventoryNumber.textContent = hasRequiredCodes
-    ? `${getCodePrefix(data)}-${suffix}`
-    : "Formátum: ESZ-PS-DK65-01";
+    : `[01-${String(quantity).padStart(2, "0")}]`;
+  inventoryNumber.textContent = `${owner}${deviceType}-${manufacturer}-${model}${subtypeValue}-${suffix}`;
 }
 
 function createInventoryNumbers(prefix, startNumber, quantity) {
@@ -362,13 +464,40 @@ function createInventoryNumbers(prefix, startNumber, quantity) {
   );
 }
 
-document.querySelector("#quantity").addEventListener("input", () => {
+quantityInput.addEventListener("focus", () => {
+  quantityInput.select();
+});
+
+quantityInput.addEventListener("input", () => {
+  quantityInput.value = quantityInput.value.replace(/\D/g, "");
+  if (Number(quantityInput.value) > maximumQuantity) {
+    quantityInput.value = String(maximumQuantity);
+  }
   updateSerialInputs();
   updateInventoryPreview();
 });
 
 form.querySelectorAll("select").forEach((input) => {
   input.addEventListener("change", updateInventoryPreview);
+});
+unitValueInput.addEventListener("input", () => {
+  unitValueInput.value = unitValueInput.value.replace(/[^\d,.-]/g, "");
+});
+unitValueInput.addEventListener("focus", () => {
+  const value = parseCurrencyValue(unitValueInput.value);
+  unitValueInput.value = value == null ? "" : String(value);
+  unitValueInput.select();
+});
+unitValueInput.addEventListener("blur", () => {
+  const value = parseCurrencyValue(unitValueInput.value);
+  unitValueInput.value = value == null ? "" : formatCurrency(value, currencyInput.value);
+  updateHufValue();
+});
+unitValueInput.addEventListener("input", updateHufValue);
+currencyInput.addEventListener("change", () => {
+  const value = parseCurrencyValue(unitValueInput.value);
+  unitValueInput.value = value == null ? "" : formatCurrency(value, currencyInput.value);
+  updateHufValue();
 });
 document.querySelector("#model").addEventListener("change", () => {
   updateSubtypeOptions();
@@ -426,6 +555,9 @@ form.addEventListener("submit", async (event) => {
           alTipus: data.alTipus,
           name: data.nev,
           price: data.egysegErtek,
+          currency: data.penznem,
+          stickerCount: data.matricakSzama,
+          stickerSize: data.matricaMeret,
           serialNumber: data.sorozatszamok[index] || "",
           placement: data.tarolasHelyeModja,
           comment: data.megjegyzes,
@@ -443,7 +575,10 @@ form.addEventListener("submit", async (event) => {
     form.reset();
     updateSubtypeOptions();
     updateSerialInputs();
-    inventoryNumber.textContent = "Formátum: ESZ-PS-DK65-01";
+    quantityInput.value = "1";
+    stickerCountInput.value = "1";
+    updateHufValue();
+    inventoryNumber.textContent = defaultInventoryPreview;
     showStatus("Az eszköz sikeresen elmentve.", "success");
   } catch (error) {
     console.error("Firestore mentési hiba:", error);
@@ -573,6 +708,7 @@ function groupInventoryItems(items) {
       item.codePrefix,
       item.name || "",
       item.price ?? "",
+      item.currency || "HUF",
       item.placement || "",
       item.comment || "",
     ].join("\u0000");
@@ -585,6 +721,10 @@ function groupInventoryItems(items) {
 }
 
 function formatCounterRange(items) {
+  if (items.length === 1) {
+    return items[0].code;
+  }
+
   const counters = items
     .map((item) => Number(item.counter))
     .sort((left, right) => left - right);
@@ -612,6 +752,79 @@ function appendCell(row, value) {
   row.append(cell);
 }
 
+function formatCurrency(value, currency = "HUF") {
+  if (value == null || value === "") {
+    return "";
+  }
+  return new Intl.NumberFormat("hu-HU", {
+    style: "currency",
+    currency,
+    maximumFractionDigits: 2,
+  }).format(Number(value));
+}
+
+function updateExchangeRateText() {
+  if (mnbHufRates.EUR == null || mnbHufRates.USD == null) {
+    eurRateText.textContent = "EUR: Nem sikerült lekérni az élő adatokat.";
+    usdRateText.textContent = "USD: Nem sikerült lekérni az élő adatokat.";
+    return;
+  }
+  eurRateText.textContent = `1 EUR = ${mnbHufRates.EUR.toLocaleString("hu-HU", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })} Ft`;
+  usdRateText.textContent = `1 USD = ${mnbHufRates.USD.toLocaleString("hu-HU", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })} Ft`;
+}
+
+async function loadExchangeRates() {
+  if (!exchangeRateEndpoint) {
+    updateExchangeRateText();
+    updateHufValue();
+    return;
+  }
+  try {
+    const response = await fetch(exchangeRateEndpoint, {
+      headers: { Accept: "application/json" },
+    });
+    if (!response.ok) {
+      throw new Error(`Exchange-rate proxy returned ${response.status}`);
+    }
+    const result = await response.json();
+    const eur = Number(result.rates?.EUR);
+    const usd = Number(result.rates?.USD);
+    if (!Number.isFinite(eur) || !Number.isFinite(usd) || eur <= 0 || usd <= 0) {
+      throw new Error("Exchange-rate proxy returned invalid rates");
+    }
+    mnbHufRates.EUR = eur;
+    mnbHufRates.USD = usd;
+    updateExchangeRateText();
+    updateHufValue();
+  } catch (error) {
+    updateExchangeRateText();
+    updateHufValue();
+    console.warn("Live exchange rates could not be fetched.", error);
+  }
+}
+
+function updateHufValue() {
+  const value = parseCurrencyValue(unitValueInput.value);
+  const isForeignCurrency = currencyInput.value !== "HUF";
+  hufValueRow.hidden = !isForeignCurrency;
+  document.querySelector("#unit-value").closest(".form-row")
+    .classList.toggle("form-row--multiline", isForeignCurrency);
+  hufValueInput.textContent = !isForeignCurrency || value == null
+    ? ""
+    : mnbHufRates[currencyInput.value] == null
+      ? "Nem sikerült lekérni az élő adatokat."
+      : formatCurrency(value * mnbHufRates[currencyInput.value], "HUF");
+}
+
+updateExchangeRateText();
+loadExchangeRates();
+
 function renderInventory() {
   const query = inventorySearch.value.trim().toLocaleLowerCase("hu-HU");
   const filtered = inventoryState.items.filter((item) => {
@@ -637,7 +850,7 @@ function renderInventory() {
     const row = document.createElement("tr");
     appendCell(row, group.name);
     appendCell(row, formatCounterRange(group.items).replace(/-00-/, "-"));
-    appendCell(row, group.price == null ? "" : `${group.price}`);
+    appendCell(row, formatCurrency(group.price, group.currency || "HUF"));
     appendCell(row, group.items.map((item) => item.serialNumber || "—").join(", "));
     appendCell(row, group.placement);
     appendCell(row, group.comment);
@@ -715,6 +928,299 @@ async function deleteInventoryItem(item) {
   }
 }
 
+const parameterEditor = {
+  model: "",
+};
+
+let draggedParameterEntry = null;
+let parameterDropPlaceholder = null;
+let pointerDragState = null;
+
+function createParameterEntry([code, label], onChange) {
+  const row = document.createElement("div");
+  row.className = "parameter-entry";
+  const codeInput = document.createElement("input");
+  codeInput.value = code;
+  codeInput.maxLength = 8;
+  codeInput.ariaLabel = "Kód";
+  const labelInput = document.createElement("input");
+  labelInput.value = label;
+  labelInput.ariaLabel = "Megnevezés";
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.textContent = "×";
+  remove.title = "Törlés";
+  remove.addEventListener("click", () => {
+    row.remove();
+    onChange();
+  });
+  const handle = document.createElement("button");
+  handle.type = "button";
+  handle.className = "parameter-drag-handle";
+  handle.textContent = "⋮⋮";
+  handle.title = "Húzd az elem átrendezéséhez";
+  handle.draggable = true;
+  [codeInput, labelInput].forEach((input) => input.addEventListener("input", onChange));
+  handle.addEventListener("dragstart", (event) => {
+    const list = row.parentElement;
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", "parameter-entry");
+    row.classList.add("parameter-entry--dragging");
+    list.dataset.dragging = "true";
+    draggedParameterEntry = row;
+    parameterDropPlaceholder = document.createElement("div");
+    parameterDropPlaceholder.className = "parameter-drop-placeholder";
+    list.insertBefore(parameterDropPlaceholder, row);
+  });
+  handle.addEventListener("dragend", () => {
+    const list = row.parentElement;
+    row.hidden = false;
+    delete list.dataset.dragging;
+    parameterDropPlaceholder?.remove();
+    draggedParameterEntry = null;
+    parameterDropPlaceholder = null;
+    onChange();
+  });
+  handle.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const list = row.parentElement;
+    draggedParameterEntry = row;
+    parameterDropPlaceholder = row.cloneNode(true);
+    parameterDropPlaceholder.classList.add("parameter-drop-placeholder");
+    parameterDropPlaceholder.hidden = false;
+    parameterDropPlaceholder.setAttribute("aria-hidden", "true");
+    parameterDropPlaceholder.querySelectorAll("input, button").forEach((control) => {
+      control.tabIndex = -1;
+    });
+    list.insertBefore(parameterDropPlaceholder, row);
+    row.hidden = true;
+    row.classList.add("parameter-entry--dragging");
+    list.dataset.dragging = "true";
+    pointerDragState = { list, pointerId: event.pointerId };
+    handle.setPointerCapture(event.pointerId);
+  });
+  row.append(codeInput, labelInput, remove, handle);
+  return row;
+}
+
+document.addEventListener("dragover", (event) => {
+  const list = event.target.closest(".parameter-entry-list");
+  const draggedList = draggedParameterEntry?.parentElement;
+  if (!list || !draggedParameterEntry || list !== draggedList) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "move";
+  const after = [...list.querySelectorAll(".parameter-entry:not([hidden]):not(.parameter-drop-placeholder)")]
+    .find((entry) => event.clientY < entry.getBoundingClientRect().top + entry.offsetHeight / 2);
+  list.insertBefore(parameterDropPlaceholder, after || null);
+  if (event.clientY < 90) window.scrollBy(0, -12);
+  if (event.clientY > window.innerHeight - 90) window.scrollBy(0, 12);
+});
+
+document.addEventListener("drop", (event) => {
+  const list = event.target.closest(".parameter-entry-list");
+  const draggedList = draggedParameterEntry?.parentElement;
+  if (!list || !draggedParameterEntry || list !== draggedList) return;
+  event.preventDefault();
+  list.insertBefore(draggedParameterEntry, parameterDropPlaceholder);
+});
+
+document.addEventListener("pointermove", (event) => {
+  if (!pointerDragState || event.pointerId !== pointerDragState.pointerId) return;
+  event.preventDefault();
+  const { list } = pointerDragState;
+  const after = [...list.querySelectorAll(".parameter-entry:not(.parameter-entry--dragging)")]
+    .find((entry) => event.clientY < entry.getBoundingClientRect().top + entry.offsetHeight / 2);
+  list.insertBefore(parameterDropPlaceholder, after || null);
+  if (event.clientY < 90) window.scrollBy(0, -12);
+  if (event.clientY > window.innerHeight - 90) window.scrollBy(0, 12);
+});
+
+document.addEventListener("pointerup", (event) => {
+  if (!pointerDragState || event.pointerId !== pointerDragState.pointerId) return;
+  const { list } = pointerDragState;
+  list.insertBefore(draggedParameterEntry, parameterDropPlaceholder);
+  draggedParameterEntry.classList.remove("parameter-entry--dragging");
+  draggedParameterEntry.hidden = false;
+  delete list.dataset.dragging;
+  parameterDropPlaceholder.remove();
+  draggedParameterEntry = null;
+  parameterDropPlaceholder = null;
+  pointerDragState = null;
+  readParameterCatalogs();
+  readParameterRule();
+});
+
+function readParameterEntries(container) {
+  return [...container.querySelectorAll(".parameter-entry")].map((row) => {
+    const inputs = row.querySelectorAll("input");
+    return [inputs[0].value.trim(), inputs[1].value.trim()];
+  }).filter(([code, label]) => code && label);
+}
+
+function renderCatalogEditor(key) {
+  const container = document.querySelector(`#parameter-${key}`);
+  container.replaceChildren();
+  const sync = () => {
+    catalogs[key] = readParameterEntries(container);
+  };
+  catalogs[key].forEach((entry) => {
+    container.append(createParameterEntry(entry, sync));
+  });
+}
+
+function renderRuleEntries(containerId, entries) {
+  const container = document.querySelector(`#${containerId}`);
+  container.replaceChildren();
+  const sync = () => readParameterRule();
+  entries.forEach((entry) => container.append(createParameterEntry(entry, sync)));
+}
+
+function renderParameterRule() {
+  const model = parameterEditor.model;
+  const simplePanel = document.querySelector("#parameter-simple-rule");
+  const splitPanel = document.querySelector("#parameter-split-rule");
+  const mode = splitSubtypeRules[model] ? "split" : subtypeRules[model] ? "simple" : "none";
+  document.querySelector("#parameter-rule-mode").value = mode;
+  simplePanel.hidden = mode !== "simple";
+  splitPanel.hidden = mode !== "split";
+  simplePanel.replaceChildren();
+  if (mode === "simple") {
+    const list = document.createElement("div");
+    list.id = "parameter-simple-list";
+    list.className = "parameter-entry-list";
+    simplePanel.append(list);
+    renderRuleEntries("parameter-simple-list", subtypeRules[model]);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "secondary-button parameter-add-rule";
+    button.textContent = "+ Altípus";
+    button.addEventListener("click", () => {
+      subtypeRules[model].push(["", ""]);
+      renderParameterRule();
+    });
+    simplePanel.append(button);
+  }
+
+  if (mode === "split") {
+    renderRuleEntries("parameter-split-first", splitSubtypeRules[model].first);
+    renderRuleEntries("parameter-split-second", splitSubtypeRules[model].second);
+  }
+}
+
+function setParameterRuleMode(mode) {
+  const model = parameterEditor.model;
+  delete subtypeRules[model];
+  delete splitSubtypeRules[model];
+  if (mode === "simple") {
+    subtypeRules[model] = [...defaultSubtypes];
+  } else if (mode === "split") {
+    const digits = [["0", "Ismeretlen"]];
+    splitSubtypeRules[model] = {
+      first: [...digits],
+      second: [...digits],
+    };
+  }
+  renderParameterRule();
+}
+
+function renderParameterEditor() {
+  Object.keys(catalogs).forEach(renderCatalogEditor);
+  const modelSelect = document.querySelector("#parameter-model-select");
+  modelSelect.replaceChildren(...catalogs.model.map(([code, label]) => new Option(`${code}: ${label}`, code)));
+  parameterEditor.model = modelSelect.value || catalogs.model[0]?.[0] || "";
+  modelSelect.value = parameterEditor.model;
+  renderParameterRule();
+}
+
+function readParameterRule() {
+  const model = parameterEditor.model;
+  const mode = document.querySelector("#parameter-rule-mode").value;
+  delete subtypeRules[model];
+  delete splitSubtypeRules[model];
+  if (mode === "simple") {
+    const list = document.querySelector("#parameter-simple-list");
+    subtypeRules[model] = list ? readParameterEntries(list) : [];
+  }
+  if (mode === "split") {
+    const first = document.querySelector("#parameter-split-first");
+    const second = document.querySelector("#parameter-split-second");
+    splitSubtypeRules[model] = {
+      first: first ? readParameterEntries(first) : [],
+      second: second ? readParameterEntries(second) : [],
+    };
+  }
+}
+
+function readParameterCatalogs() {
+  Object.keys(catalogs).forEach((key) => {
+    catalogs[key] = readParameterEntries(document.querySelector(`#parameter-${key}`));
+  });
+}
+
+async function saveParameterConfig() {
+  readParameterCatalogs();
+  readParameterRule();
+  try {
+    await setDoc(parameterDocument, {
+      catalogs: Object.fromEntries(
+        Object.entries(catalogs).map(([key, entries]) => [key, serializeParameterEntries(entries)]),
+      ),
+      subtypeRules: Object.fromEntries(
+        Object.entries(subtypeRules).map(([key, entries]) => [key, serializeParameterEntries(entries)]),
+      ),
+      splitSubtypeRules: Object.fromEntries(
+        Object.entries(splitSubtypeRules).map(([key, rule]) => [key, {
+          first: serializeParameterEntries(rule.first),
+          second: serializeParameterEntries(rule.second),
+        }]),
+      ),
+    });
+    parameterStatus.textContent = "A paraméterek mentése sikerült.";
+    parameterStatus.className = "form-status form-status--success";
+    populateSelect("owner", catalogs.owner);
+    populateSelect("device-type", catalogs.deviceType);
+    populateSelect("manufacturer", catalogs.manufacturer);
+    populateSelect("model", catalogs.model);
+    renderParameterEditor();
+  } catch (error) {
+    console.error("Paraméterek mentési hiba:", error);
+    parameterStatus.textContent = "A paraméterek mentése nem sikerült.";
+    parameterStatus.className = "form-status form-status--error";
+  }
+}
+
+const parameterStatus = document.querySelector("#parameter-status");
+document.querySelectorAll(".parameter-add").forEach((button) => {
+  button.addEventListener("click", () => {
+    const key = button.dataset.catalog;
+    readParameterCatalogs();
+    catalogs[key].push(["", ""]);
+    renderCatalogEditor(key);
+  });
+});
+document.querySelectorAll(".parameter-add-digit").forEach((button) => {
+  button.addEventListener("click", () => {
+    const model = parameterEditor.model;
+    readParameterRule();
+    if (!splitSubtypeRules[model]) {
+      splitSubtypeRules[model] = { first: [], second: [] };
+    }
+    splitSubtypeRules[model][button.dataset.digit].push(["", ""]);
+    renderParameterRule();
+  });
+});
+document.querySelector("#parameter-model-select").addEventListener("change", (event) => {
+  readParameterRule();
+  parameterEditor.model = event.target.value;
+  renderParameterRule();
+});
+document.querySelector("#parameter-rule-mode").addEventListener("change", () => {
+  setParameterRuleMode(document.querySelector("#parameter-rule-mode").value);
+});
+document.querySelector("#save-parameters").addEventListener("click", saveParameterConfig);
+renderParameterEditor();
+
 document.querySelector("#cancel-edit").addEventListener("click", () => editDialog.close());
 document.querySelector("#refresh-inventory").addEventListener("click", loadInventory);
 applyInventoryFilters.addEventListener("click", renderInventory);
@@ -745,16 +1251,23 @@ document.querySelectorAll(".navigation-link").forEach((link) => {
     }
     event.preventDefault();
     document.querySelectorAll(".inventory-page").forEach((section) => {
-      section.hidden = section.id !== (page === "inventory" ? "leltar" : "uj-bevezetes");
+      const targetId = page === "inventory" ? "leltar"
+        : page === "parameters" ? "parameterek" : "uj-bevezetes";
+      section.hidden = section.id !== targetId;
     });
     document.querySelectorAll(".navigation-link").forEach((navigationLink) => {
       navigationLink.classList.toggle("navigation-link--active", navigationLink === link);
     });
     if (page === "inventory") loadInventory();
+    if (page === "parameters") renderParameterEditor();
     window.history.replaceState(null, "", link.hash);
   });
 });
 
-if (window.location.hash === "#leltar") {
+if (window.location.hash === "#uj-bevezetes") {
+  document.querySelector('[data-page="entry"]').click();
+} else if (window.location.hash === "#parameterek") {
+  document.querySelector('[data-page="parameters"]').click();
+} else {
   document.querySelector('[data-page="inventory"]').click();
 }

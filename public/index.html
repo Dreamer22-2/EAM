@@ -15,36 +15,41 @@
         </div>
 
         <nav class="navigation">
-          <a class="navigation-link navigation-link--active" href="#uj-bevezetes" data-page="entry">
-            <span class="navigation-icon navigation-icon--plus" aria-hidden="true">+</span>
+          <a class="navigation-link" href="#uj-bevezetes" data-page="entry">
+            <img class="navigation-icon navigation-icon--image" src="/assets/add-icon.svg" alt="" aria-hidden="true" />
             <span>Új bevezetés</span>
           </a>
           <a class="navigation-link" href="#leltar" data-page="inventory">
-            <span class="navigation-icon navigation-icon--list" aria-hidden="true">☷</span>
+            <img class="navigation-icon navigation-icon--image" src="/assets/list-icon.svg" alt="" aria-hidden="true" />
             <span>Leltár</span>
           </a>
           <a class="navigation-link" href="#matricainator" data-page="labels">
-            <span class="navigation-icon navigation-icon--tag" aria-hidden="true">▣</span>
+            <img class="navigation-icon navigation-icon--image" src="/assets/sticker-icon.svg" alt="" aria-hidden="true" />
             <span>Matricainátor</span>
+          </a>
+          <a class="navigation-link" href="#parameterek" data-page="parameters">
+            <span class="navigation-icon navigation-icon--settings" aria-hidden="true">⚙</span>
+            <span>Paraméterek</span>
           </a>
         </nav>
       </aside>
 
       <main class="main-content">
-        <section class="inventory-page" id="uj-bevezetes">
+        <section class="inventory-page" id="uj-bevezetes" hidden>
           <h1>ESZKÖZ BEVEZETÉSE A LELTÁRBA</h1>
 
           <form id="inventory-form" novalidate>
+            <div class="form-row form-row--name">
+              <label for="name">Eszköz neve:</label>
+              <input id="name" name="name" type="text" required autocomplete="off" />
+            </div>
+
             <div class="form-layout">
               <div class="form-column form-column--primary">
                 <div class="form-row">
-                  <label for="name">Eszköz neve:</label>
-                  <input id="name" name="name" type="text" required autocomplete="off" />
-                </div>
-
-                <div class="form-row">
                   <label for="quantity">Darabszám:</label>
-                  <input id="quantity" name="quantity" type="number" min="1" max="99" step="1" required />
+                  <input id="quantity" name="quantity" type="number" min="1" max="99" step="1"
+                    inputmode="numeric" value="1" required />
                 </div>
 
                 <div class="form-row">
@@ -95,17 +100,55 @@
 
                 <div class="form-row form-row--calculated">
                   <label for="inventory-number">Leltári szám(ok):</label>
-                  <em id="inventory-number">Formátum: ESZ-PS-DK65-01</em>
+                  <em id="inventory-number">XXX-00-XX00-00</em>
                 </div>
 
                 <div class="form-row form-row--spaced">
                   <label for="unit-value">Egységérték:</label>
-                  <input id="unit-value" name="unitValue" type="number" min="0" step="0.01" inputmode="decimal" />
+                  <div class="unit-value-controls">
+                    <div class="unit-value-entry">
+                      <input id="unit-value" name="unitValue" type="text" inputmode="decimal"
+                        autocomplete="off" />
+                      <select id="currency" name="currency" aria-label="Pénznem">
+                        <option value="HUF" selected>HUF</option>
+                        <option value="EUR">EUR</option>
+                        <option value="USD">USD</option>
+                      </select>
+                    </div>
+                      <div id="huf-value-row" class="unit-value-huf" hidden>
+                        <span>HUF-ban:</span>
+                        <span id="huf-value" aria-label="Egységérték forintban"></span>
+                      </div>
+                    </div>
                 </div>
 
                 <div class="form-row form-row--calculated">
                   <label for="total-value">Összérték:</label>
                   <em id="total-value">Később automatikusan számolva</em>
+                </div>
+
+                <div class="form-row">
+                  <label for="sticker-count">Matricák száma:</label>
+                  <input id="sticker-count" name="stickerCount" type="number" min="0" max="10" step="1"
+                    inputmode="numeric" value="1" />
+                </div>
+
+                <div class="form-row form-row--radio">
+                  <span class="form-label">Matrica méret:</span>
+                  <div class="radio-options">
+                    <label>
+                      <input type="radio" name="stickerSize" value="small" />
+                      <span>Kicsi</span>
+                    </label>
+                    <label>
+                      <input type="radio" name="stickerSize" value="medium" />
+                      <span>Közepes</span>
+                    </label>
+                    <label>
+                      <input type="radio" name="stickerSize" value="big" checked />
+                      <span>Nagy</span>
+                    </label>
+                  </div>
                 </div>
 
                 <div class="form-row serial-row">
@@ -123,6 +166,14 @@
                 <div class="form-row form-row--textarea">
                   <label for="notes">Megjegyzés:</label>
                   <textarea id="notes" name="notes" rows="4"></textarea>
+                </div>
+
+                <div class="form-row form-row--calculated exchange-rates-row" aria-label="MNB árfolyamok">
+                  <span class="form-label">Árfolyamok:</span>
+                  <div class="exchange-rates">
+                    <span id="eur-rate">EUR: Nem sikerült lekérni az élő adatokat.</span>
+                    <span id="usd-rate">USD: Nem sikerült lekérni az élő adatokat.</span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -184,6 +235,70 @@
             </table>
           </div>
         </section>
+
+        <section class="inventory-page parameters-page" id="parameterek" hidden>
+          <h1>PARAMÉTERKEZELŐ</h1>
+
+          <div class="parameter-section">
+            <h2>Legördülő listák</h2>
+            <div class="parameter-catalog-grid">
+              <div class="parameter-card">
+                <h3>Tulajdonos</h3>
+                <div id="parameter-owner" class="parameter-entry-list"></div>
+                <button type="button" class="secondary-button parameter-add" data-catalog="owner">+ Új tulajdonos</button>
+              </div>
+              <div class="parameter-card">
+                <h3>Eszköztípus</h3>
+                <div id="parameter-deviceType" class="parameter-entry-list"></div>
+                <button type="button" class="secondary-button parameter-add" data-catalog="deviceType">+ Új eszköztípus</button>
+              </div>
+              <div class="parameter-card">
+                <h3>Gyártó / márka</h3>
+                <div id="parameter-manufacturer" class="parameter-entry-list"></div>
+                <button type="button" class="secondary-button parameter-add" data-catalog="manufacturer">+ Új gyártó</button>
+              </div>
+              <div class="parameter-card">
+                <h3>Típus</h3>
+                <div id="parameter-model" class="parameter-entry-list"></div>
+                <button type="button" class="secondary-button parameter-add" data-catalog="model">+ Új típus</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="parameter-section">
+            <h2>Altípus-szabályok</h2>
+            <div class="parameter-rule-toolbar">
+              <label for="parameter-model-select">Típus:
+                <select id="parameter-model-select"></select>
+              </label>
+              <label for="parameter-rule-mode">Altípus-logika:
+                <select id="parameter-rule-mode">
+                  <option value="simple">Egy lista</option>
+                  <option value="split">Két külön számjegy</option>
+                  <option value="none">Alapértelmezett + egyéni</option>
+                </select>
+              </label>
+            </div>
+            <div id="parameter-simple-rule" class="parameter-rule-panel"></div>
+            <div id="parameter-split-rule" class="parameter-rule-panel" hidden>
+              <div>
+                <h3>Első számjegy</h3>
+                <div id="parameter-split-first" class="parameter-entry-list"></div>
+                <button type="button" class="secondary-button parameter-add-digit" data-digit="first">+ Bejegyzés</button>
+              </div>
+              <div>
+                <h3>Második számjegy</h3>
+                <div id="parameter-split-second" class="parameter-entry-list"></div>
+                <button type="button" class="secondary-button parameter-add-digit" data-digit="second">+ Bejegyzés</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-actions parameter-actions">
+            <button type="button" id="save-parameters">Paraméterek mentése</button>
+            <p id="parameter-status" class="form-status" role="status" aria-live="polite"></p>
+          </div>
+        </section>
       </main>
     </div>
 
@@ -202,6 +317,7 @@
       </form>
     </dialog>
 
+    <script src="/runtime-config.js"></script>
     <script type="module" src="/app.js"></script>
   </body>
 </html>

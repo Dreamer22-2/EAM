@@ -91,14 +91,46 @@ body {
 }
 
 .navigation-icon--list {
-  font-size: 32px;
-  transform: rotate(90deg);
+  position: relative;
+  width: 22px;
+  height: 18px;
+  background:
+    radial-gradient(circle, currentColor 0 2px, transparent 2.5px) 0 0 / 7px 7px,
+    linear-gradient(currentColor, currentColor) 8px 1px / 14px 3px,
+    linear-gradient(currentColor, currentColor) 8px 8px / 14px 3px,
+    linear-gradient(currentColor, currentColor) 8px 15px / 14px 3px;
+  background-repeat: no-repeat;
 }
 
 .navigation-icon--tag {
+  position: relative;
+  width: 18px;
+  height: 18px;
   border: 3px solid currentColor;
-  border-radius: 6px;
-  font-size: 16px;
+  border-radius: 5px;
+}
+
+.navigation-icon--tag::after {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 7px;
+  height: 7px;
+  border-top: 3px solid var(--sidebar);
+  border-left: 3px solid currentColor;
+  border-radius: 3px 0 0;
+  background: var(--sidebar);
+  content: "";
+}
+
+.navigation-icon--image {
+  width: 25px;
+  height: 25px;
+  object-fit: contain;
+}
+
+.navigation-icon--settings {
+  font-size: 25px;
 }
 
 .main-content {
@@ -109,6 +141,128 @@ body {
 
 .inventory-page[hidden] {
   display: none;
+}
+
+.page-introduction,
+.parameter-help {
+  color: var(--muted);
+  font-size: 17px;
+}
+
+.page-introduction {
+  margin: -25px 0 30px;
+  text-align: center;
+}
+
+.parameter-section {
+  margin-bottom: 30px;
+}
+
+.parameter-section h2 {
+  margin: 0 0 5px;
+}
+
+.parameter-section h3 {
+  margin: 0 0 10px;
+  font-size: 19px;
+}
+
+.parameter-help {
+  margin: 0 0 18px;
+}
+
+.parameter-catalog-grid,
+.parameter-rule-panel {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.parameter-rule-panel[hidden] {
+  display: none;
+}
+
+.parameter-card,
+.parameter-rule-panel > div {
+  padding: 16px;
+  border: 1px solid var(--field-border);
+  border-radius: 8px;
+  background: #202229;
+}
+
+.parameter-entry-list {
+  display: grid;
+  gap: 7px;
+  margin-bottom: 12px;
+}
+
+.parameter-entry {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr) 34px 40px;
+  gap: 6px;
+}
+
+.parameter-entry[hidden] {
+  display: none !important;
+}
+
+.parameter-entry--dragging input,
+.parameter-entry--dragging button,
+.parameter-drop-placeholder input,
+.parameter-drop-placeholder button {
+  background: #0e0f14 !important;
+}
+
+.parameter-entry button {
+  padding: 0;
+  border: 1px solid var(--field-border);
+  border-radius: 7px;
+  background: var(--field);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 18px;
+}
+
+.parameter-entry button:hover {
+  background: var(--blue-hover);
+}
+
+.parameter-drag-handle {
+  cursor: grab !important;
+  color: var(--muted) !important;
+  letter-spacing: -3px;
+  touch-action: none;
+  user-select: none;
+}
+
+.parameter-drag-handle:active {
+  cursor: grabbing !important;
+}
+
+.parameter-drop-placeholder {
+  pointer-events: none;
+}
+
+.parameter-add {
+  width: 100%;
+}
+
+.parameter-rule-toolbar {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(180px, 1fr));
+  gap: 15px;
+  margin-bottom: 18px;
+}
+
+.parameter-rule-toolbar label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.parameter-actions {
+  margin-top: 8px;
 }
 
 .page-heading {
@@ -257,7 +411,11 @@ h1 {
 
 .form-column--secondary {
   gap: 29px;
-  padding-top: 66px;
+  padding-top: 0;
+}
+
+.form-row--name {
+  margin-bottom: 28px;
 }
 
 .form-row {
@@ -274,12 +432,18 @@ h1 {
   text-align: right;
 }
 
+.form-label {
+  font-size: 23px;
+  font-weight: 700;
+  text-align: right;
+}
+
 input,
 select,
 textarea {
   width: 100%;
   border: 1px solid var(--field-border);
-  border-radius: 5px;
+  border-radius: 7px;
   background: var(--field);
   color: var(--text);
   font: inherit;
@@ -287,7 +451,7 @@ textarea {
 
 input,
 select {
-  height: 24px;
+  height: 30px;
   padding: 1px 9px;
 }
 
@@ -349,9 +513,93 @@ textarea:focus {
   max-width: 272px;
 }
 
+.unit-value-controls {
+  display: block;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.unit-value-entry {
+  display: grid;
+  grid-template-columns: minmax(0, 272px) 90px;
+  gap: 8px;
+  max-width: 370px;
+}
+
+.unit-value-entry select {
+  width: 90px;
+}
+
+.unit-value-huf {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  width: 370px;
+  max-width: 100%;
+  margin-top: 6px;
+}
+
+.unit-value-huf[hidden] {
+  display: none !important;
+}
+
+.unit-value-huf span {
+  color: var(--muted);
+  font-size: 21px;
+  font-style: italic;
+  font-weight: 400;
+}
+
+.form-row--spaced.form-row--multiline {
+  align-items: start;
+}
+
+.unit-value-huf span:last-child {
+  color: var(--muted);
+}
+
+.form-row--multiline {
+  align-items: start;
+}
+
+.exchange-rates {
+  display: grid;
+  gap: 2px;
+  color: var(--muted);
+  font-size: 21px;
+  font-style: italic;
+}
+
+.exchange-rates-row {
+  align-items: start;
+}
+
 .serial-row {
   align-items: start;
   margin-top: 0;
+}
+
+.form-row--radio {
+  align-items: center;
+}
+
+.radio-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+}
+
+.radio-options label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 16px;
+}
+
+.radio-options input {
+  width: auto;
+  height: auto;
 }
 
 .serial-inputs {
@@ -364,7 +612,7 @@ textarea:focus {
 }
 
 .form-row--textarea {
-  grid-template-columns: 225px minmax(0, 1fr);
+  grid-template-columns: 220px minmax(0, 1fr);
   align-items: start;
 }
 
@@ -429,6 +677,16 @@ button:disabled {
 
   .inventory-toolbar {
     grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 1200px) and (min-width: 651px) {
+  .form-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .form-column--secondary {
+    padding-top: 20px;
   }
 }
 
@@ -502,6 +760,10 @@ button:disabled {
     padding-bottom: 120px;
   }
 
+  .exchange-rates {
+    margin-left: 0;
+  }
+
   .main-content {
     margin-left: 0;
   }
@@ -527,4 +789,19 @@ button:disabled {
   .form-column--secondary {
     gap: 18px;
   }
+
+  .parameter-catalog-grid,
+  .parameter-rule-panel,
+  .parameter-rule-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .parameter-section {
+    padding: 14px;
+  }
+
+  .parameter-entry {
+    grid-template-columns: 58px minmax(0, 1fr) 32px 38px;
+  }
+
 }
