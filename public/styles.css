@@ -1099,17 +1099,19 @@ button:disabled {
   }
 
   .navigation {
+    flex: 1;
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 0;
+    min-width: 0;
     height: 100%;
     margin-top: 0;
   }
 
   .auth-button {
-    width: auto;
-    min-width: 46px;
+    flex: 0 0 46px;
+    width: 46px;
     height: 46px;
     margin: 0;
     padding: 7px 4px;
