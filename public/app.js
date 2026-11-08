@@ -610,8 +610,313 @@ const inventoryState = {
   editing: null,
 };
 
+const importFields = [
+  ["code", "Leltári szám", true],
+  ["name", "Név", true],
+  ["owner", "Tulajdonos"],
+  ["deviceType", "Eszköztípus"],
+  ["manufacturer", "Gyártó/márka"],
+  ["model", "Típus"],
+  ["subtype", "Altípus"],
+  ["price", "Egységérték"],
+  ["currency", "Pénznem"],
+  ["serialNumber", "Sorozatszám"],
+  ["placement", "Tárolás helye, módja"],
+  ["comment", "Megjegyzés"],
+];
+
+const importState = {
+  workbook: null,
+  rows: [],
+  previewRows: [],
+};
+const importFile = document.querySelector("#import-file");
+const importFileStatus = document.querySelector("#import-file-status");
+const importOptions = document.querySelector("#import-options");
+const importSheet = document.querySelector("#import-sheet");
+const importHeaderRow = document.querySelector("#import-header-row");
+const importFirstRow = document.querySelector("#import-first-row");
+const importLastRow = document.querySelector("#import-last-row");
+const importMapping = document.querySelector("#import-mapping");
+const importPreviewCard = document.querySelector("#import-preview-card");
+const importPreviewStatus = document.querySelector("#import-preview-status");
+const importPreviewHead = document.querySelector("#import-preview-head");
+const importPreviewBody = document.querySelector("#import-preview-body");
+const importPreviewButton = document.querySelector("#import-preview-button");
+const importConfirmButton = document.querySelector("#import-confirm-button");
+
+function setImportStatus(message, type = "") {
+  importFileStatus.textContent = message;
+  importFileStatus.className = `form-status${type ? ` form-status--${type}` : ""}`;
+}
+
+function getImportSheetRows() {
+  if (!importState.workbook) return [];
+  const sheet = importState.workbook.Sheets[importSheet.value];
+  return sheet ? window.XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: "" }) : [];
+}
+
+function renderImportMapping() {
+  const rows = getImportSheetRows();
+  const headerIndex = Math.max(Number(importHeaderRow.value) - 1, 0);
+  const headers = rows[headerIndex] || [];
+  importMapping.replaceChildren();
+  importFields.forEach(([key, label, required]) => {
+    const wrapper = document.createElement("label");
+    const title = document.createElement("span");
+    title.textContent = `${label}${required ? " *" : ""}`;
+    const select = document.createElement("select");
+    select.dataset.importField = key;
+    select.append(new Option("— nincs hozzárendelve —", ""));
+    headers.forEach((header, index) => {
+      const text = String(header).trim();
+      if (text) select.append(new Option(`${text} (oszlop ${index + 1})`, String(index)));
+    });
+    const likelyHeader = headers.findIndex((header) => String(header).trim().toLocaleLowerCase("hu-HU")
+      === label.toLocaleLowerCase("hu-HU"));
+    if (likelyHeader >= 0) select.value = String(likelyHeader);
+    wrapper.append(title, select);
+    importMapping.append(wrapper);
+  });
+  importLastRow.value = rows.length ? String(rows.length) : "";
+  importFirstRow.value = String(Math.min(Number(importHeaderRow.value) + 1, Math.max(rows.length, 1)));
+}
+
+function normalizeImportCatalogValue(value, catalogKey) {
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+  const match = catalogs[catalogKey].find(([code, label]) => code === text || label.toLocaleLowerCase("hu-HU")
+    === text.toLocaleLowerCase("hu-HU"));
+  return match ? match[0] : text;
+}
+
+function readImportMapping() {
+  return Object.fromEntries([...importMapping.querySelectorAll("select")].map((select) => [
+    select.dataset.importField,
+    select.value === "" ? null : Number(select.value),
+  ]));
+}
+
+function getMergedCellValue(sheet, rowIndex, columnIndex) {
+  const merge = (sheet["!merges"] || []).find((range) => (
+    rowIndex >= range.s.r
+      && rowIndex <= range.e.r
+      && columnIndex >= range.s.c
+      && columnIndex <= range.e.c
+  ));
+  if (!merge || (merge.s.r === rowIndex && merge.s.c === columnIndex)) return null;
+  const address = window.XLSX.utils.encode_cell({ r: merge.s.r, c: merge.s.c });
+  return sheet[address]?.v ?? "";
+}
+
+function getImportValue(row, mapping, field, sheet, rowIndex) {
+  const column = mapping[field];
+  if (column == null) return "";
+  const cellValue = row[column];
+  const value = cellValue == null || String(cellValue).trim() === ""
+    ? getMergedCellValue(sheet, rowIndex, column) ?? ""
+    : cellValue;
+  return String(value).trim();
+}
+
+function splitImportedSerialNumbers(value) {
+  return String(value || "").trim().split(/[\s,;]+/).filter(Boolean);
+}
+
+function expandImportedInventoryCode(value) {
+  const code = String(value || "").trim().toUpperCase();
+  const match = code.match(/^([\p{L}\p{N}]{3}-[\p{L}\p{N}]{2}-[\p{L}\p{N}]{4})-(\d{2,3}|\[([^\]]+)\])$/u);
+  if (!match) return null;
+  if (/^\d{2,3}$/.test(match[2])) return [`${match[1]}-${match[2]}`];
+  const counters = match[3].split(",").map((counter) => counter.trim());
+  if (counters.every((counter) => /^\d{2,3}$/.test(counter))) {
+    return counters.map((counter) => `${match[1]}-${counter}`);
+  }
+  const range = match[3].match(/^(\d{2,3})-(\d{2,3})$/);
+  if (!range) return null;
+  const start = Number(range[1]);
+  const end = Number(range[2]);
+  if (end < start) return null;
+  const counterWidth = range[1].length;
+  return Array.from({ length: end - start + 1 }, (_, index) => (
+    `${match[1]}-${String(start + index).padStart(counterWidth, "0")}`
+  ));
+}
+
+function describeInvalidInventoryCode(value) {
+  const code = String(value || "").trim();
+  const segments = code.split("-");
+  const reasons = [];
+  if (segments.length !== 4) {
+    reasons.push(`${segments.length} kötőjellel elválasztott részt tartalmaz, 4 szükséges`);
+  } else {
+    if (!/^[\p{L}\p{N}]{3}$/u.test(segments[0])) reasons.push("az első résznek 3 betűből vagy számból kell állnia");
+    if (!/^[\p{L}\p{N}]{2}$/u.test(segments[1])) reasons.push("a második résznek 2 betűből vagy számból kell állnia");
+    if (!/^[\p{L}\p{N}]{4}$/u.test(segments[2])) reasons.push("a harmadik résznek 4 betűből vagy számból kell állnia");
+    if (!/^(?:\d{2,3}|\[\d{2,3}-\d{2,3}\]|\[\d{2,3}(?:,\s*\d{2,3})+\])$/i.test(segments[3])) {
+      reasons.push("az utolsó résznek két vagy három számjegynek, [00-05] tartománynak vagy [02, 05, 09] listának kell lennie");
+    }
+  }
+  return `Érvénytelen leltári szám a(z) ${code || "(üres)"} értékben: `
+    + `${reasons.join("; ")}. Elvárt forma: XXX-00-XX00-00 vagy XXX-00-XX00-000, `
+    + `tartomány esetén például XXX-00-XX00-[69-119], lista esetén pedig `
+    + `XXX-00-XX00-[02, 05, 09].`;
+}
+
+function buildImportRows() {
+  const mapping = readImportMapping();
+  const missing = importFields.filter(([, , required]) => required)
+    .filter(([key]) => mapping[key] == null)
+    .map(([, label]) => label);
+  if (missing.length) {
+    throw new Error(`Hiányzó kötelező oszlop-hozzárendelés: ${missing.join(", ")}.`);
+  }
+
+  const rows = getImportSheetRows();
+  const sheet = importState.workbook.Sheets[importSheet.value];
+  const codeColumn = mapping.code;
+  const first = Math.max(Number(importFirstRow.value) - 1, 0);
+  const last = Math.min(Number(importLastRow.value || rows.length), rows.length);
+  if (first >= last) throw new Error("Az adat sorainak tartománya érvénytelen.");
+
+  const seenCodes = new Set();
+  const result = [];
+  for (let index = first; index < last; index += 1) {
+    const row = rows[index];
+    if (!row?.some((value) => String(value ?? "").trim())) continue;
+    const codeValue = getImportValue(row, mapping, "code", sheet, index);
+    const name = getImportValue(row, mapping, "name", sheet, index);
+    if (!codeValue && !name) continue;
+    const codeMergeValue = codeColumn == null ? null : getMergedCellValue(sheet, index, codeColumn);
+    const codeMerge = codeColumn == null ? null : (sheet["!merges"] || []).find((range) => (
+      index >= range.s.r
+        && index <= range.e.r
+        && codeColumn >= range.s.c
+        && codeColumn <= range.e.c
+    ));
+    const mergedCode = codeMerge && codeMerge.e.r > codeMerge.s.r;
+    const expandedMergedCodes = mergedCode ? expandImportedInventoryCode(codeMergeValue || codeValue) : null;
+    const mergedRowOffset = mergedCode ? index - codeMerge.s.r : 0;
+    const codes = expandedMergedCodes && expandedMergedCodes.length === codeMerge.e.r - codeMerge.s.r + 1
+      ? [expandedMergedCodes[mergedRowOffset]]
+      : expandImportedInventoryCode(codeValue);
+    if (!codes) {
+      throw new Error(`A(z) ${index + 1}. sorban ${describeInvalidInventoryCode(codeValue)}`);
+    }
+    const serialNumbers = splitImportedSerialNumbers(getImportValue(row, mapping, "serialNumber", sheet, index));
+    const serialNumbersMatch = serialNumbers.length === codes.length;
+    codes.forEach((code, codeIndex) => {
+      if (seenCodes.has(code)) throw new Error(`A leltári szám többször szerepel: ${code}.`);
+      seenCodes.add(code);
+      const codePrefix = getInventoryCodePrefix(code, "");
+      const counter = code.match(/-(\d{2,3})$/)?.[1];
+      result.push({
+        code,
+        codePrefix,
+        counter,
+        name,
+        alTipus: getImportValue(row, mapping, "subtype", sheet, index),
+        price: parseCurrencyValue(getImportValue(row, mapping, "price", sheet, index)),
+        currency: getImportValue(row, mapping, "currency", sheet, index) || "HUF",
+        serialNumber: serialNumbersMatch ? serialNumbers[codeIndex] : "",
+        placement: getImportValue(row, mapping, "placement", sheet, index),
+        comment: getImportValue(row, mapping, "comment", sheet, index),
+        sourceRow: index + 1,
+        parts: {
+          owner: normalizeImportCatalogValue(getImportValue(row, mapping, "owner", sheet, index), "owner"),
+          deviceType: normalizeImportCatalogValue(getImportValue(row, mapping, "deviceType", sheet, index), "deviceType"),
+          manufacturer: normalizeImportCatalogValue(getImportValue(row, mapping, "manufacturer", sheet, index), "manufacturer"),
+          model: normalizeImportCatalogValue(getImportValue(row, mapping, "model", sheet, index), "model"),
+        },
+      });
+    });
+  }
+  return result;
+}
+
+function renderImportPreview(rows) {
+  importState.previewRows = rows;
+  importPreviewHead.replaceChildren();
+  importPreviewBody.replaceChildren();
+  const header = document.createElement("tr");
+  ["Sor", "Leltári szám", "Név", "Egységérték", "Sorozatszám", "Tárolás helye, módja", "Megjegyzés"]
+    .forEach((label) => header.append(Object.assign(document.createElement("th"), { textContent: label })));
+  importPreviewHead.append(header);
+  rows.slice(0, 100).forEach((item) => {
+    const row = document.createElement("tr");
+    [item.sourceRow, item.code, item.name, item.price == null ? "—" : formatCurrency(item.price, item.currency),
+      item.serialNumber || "—", item.placement || "—", item.comment || "—"]
+      .forEach((value) => row.append(Object.assign(document.createElement("td"), { textContent: value })));
+    importPreviewBody.append(row);
+  });
+  importPreviewCard.hidden = false;
+  importPreviewStatus.textContent = rows.length > 100
+    ? `${rows.length} sor ellenőrizhető. Az előnézetből az első 100 látható.`
+    : `${rows.length} sor lesz importálva.`;
+  importPreviewStatus.className = "form-status form-status--success";
+}
+
+async function importPreview() {
+  try {
+    renderImportPreview(buildImportRows());
+  } catch (error) {
+    importState.previewRows = [];
+    importPreviewCard.hidden = false;
+    importPreviewStatus.textContent = error instanceof Error ? error.message : "Az előnézet nem készíthető el.";
+    importPreviewStatus.className = "form-status form-status--error";
+  }
+}
+
+async function importRowsToFirestore() {
+  if (!importState.previewRows.length) return;
+  importConfirmButton.disabled = true;
+  importPreviewStatus.textContent = "Importálás folyamatban...";
+  try {
+    const grouped = new Map();
+    importState.previewRows.forEach((item) => {
+      if (!grouped.has(item.codePrefix)) grouped.set(item.codePrefix, []);
+      grouped.get(item.codePrefix).push(item);
+    });
+    for (const [prefix, items] of grouped) {
+      const inventoryRef = doc(db, "eszkozok", prefix);
+      await runTransaction(db, async (transaction) => {
+        const snapshot = await transaction.get(inventoryRef);
+        const existingItems = snapshot.exists() ? snapshot.data().sorszamok || {} : {};
+        const importedItems = { ...existingItems };
+        items.forEach((item) => {
+          importedItems[item.counter] = {
+            leltariSzam: item.code,
+            alTipus: item.alTipus,
+            name: item.name,
+            price: item.price,
+            currency: item.currency,
+            serialNumber: item.serialNumber,
+            placement: item.placement,
+            comment: item.comment,
+            letrehozva: serverTimestamp(),
+          };
+        });
+        transaction.set(inventoryRef, {
+          leltariSzamPrefix: prefix,
+          sorszamok: importedItems,
+          frissitve: serverTimestamp(),
+        }, { merge: true });
+      });
+    }
+    importPreviewStatus.textContent = `${importState.previewRows.length} sor sikeresen importálva.`;
+    importPreviewStatus.className = "form-status form-status--success";
+    await loadInventory();
+  } catch (error) {
+    console.error("Excel-importálási hiba:", error);
+    importPreviewStatus.textContent = "Az importálás nem sikerült. Az adatok nem tekinthetők teljesen importáltnak.";
+    importPreviewStatus.className = "form-status form-status--error";
+  } finally {
+    importConfirmButton.disabled = false;
+  }
+}
+
 function getInventoryCodePrefix(code, fallback) {
-  return code?.replace(/-\d{2}$/, "") || fallback;
+  return code?.replace(/-\d{2,3}$/, "") || fallback;
 }
 
 function getOwnerDeviceParts(combinedCode) {
@@ -638,16 +943,18 @@ function getInventoryParts(prefix) {
     };
   }
 
-  const [owner = "", deviceType = "", manufacturer = "", modelAndSubtype = ""] = segments;
-  if (segments.length === 3 && deviceType === "00") {
-    const ownerDevice = getOwnerDeviceParts(owner);
+  if (segments.length === 3) {
+    const [combinedOwnerDevice = "", manufacturer = "", modelAndSubtype = ""] = segments;
     return {
-      ...ownerDevice,
-      manufacturer: "00",
-      model: segments[2].slice(0, 2),
-      subtype: segments[2].slice(2),
+      owner: combinedOwnerDevice.slice(0, 1),
+      deviceType: combinedOwnerDevice.slice(1, 3),
+      manufacturer,
+      model: modelAndSubtype.slice(0, 2),
+      subtype: modelAndSubtype.slice(2),
     };
   }
+
+  const [owner = "", deviceType = "", manufacturer = "", modelAndSubtype = ""] = segments;
   return {
     owner,
     deviceType,
@@ -657,10 +964,17 @@ function getInventoryParts(prefix) {
   };
 }
 
-function populateFilter(select, values) {
+function populateFilter(select, values, catalogKey) {
   const currentValue = select.value;
   select.replaceChildren(new Option("Mindegyik", ""));
-  [...values].sort().forEach((value) => select.append(new Option(value, value)));
+  [...values].sort((left, right) => {
+    const leftLabel = catalogs[catalogKey]?.find(([code]) => code === left)?.[1] || left;
+    const rightLabel = catalogs[catalogKey]?.find(([code]) => code === right)?.[1] || right;
+    return leftLabel.localeCompare(rightLabel, "hu");
+  }).forEach((value) => {
+    const label = catalogs[catalogKey]?.find(([code]) => code === value)?.[1] || value;
+    select.append(new Option(label, value));
+  });
   select.value = values.has(currentValue) ? currentValue : "";
 }
 
@@ -688,10 +1002,10 @@ async function loadInventory() {
       });
     });
 
-    populateFilter(inventoryOwnerFilter, new Set(inventoryState.items.map((item) => item.parts.owner)));
-    populateFilter(inventoryDeviceTypeFilter, new Set(inventoryState.items.map((item) => item.parts.deviceType)));
-    populateFilter(inventoryModelFilter, new Set(inventoryState.items.map((item) => item.parts.model)));
-    populateFilter(inventoryManufacturerFilter, new Set(inventoryState.items.map((item) => item.parts.manufacturer)));
+    populateFilter(inventoryOwnerFilter, new Set(inventoryState.items.map((item) => item.parts.owner)), "owner");
+    populateFilter(inventoryDeviceTypeFilter, new Set(inventoryState.items.map((item) => item.parts.deviceType)), "deviceType");
+    populateFilter(inventoryModelFilter, new Set(inventoryState.items.map((item) => item.parts.model)), "model");
+    populateFilter(inventoryManufacturerFilter, new Set(inventoryState.items.map((item) => item.parts.manufacturer)), "manufacturer");
     inventoryStatus.textContent = "";
     renderInventory();
   } catch (error) {
@@ -725,25 +1039,34 @@ function formatCounterRange(items) {
     return items[0].code;
   }
 
-  const counters = items
-    .map((item) => Number(item.counter))
+  const counters = [...new Set(items
+    .map((item) => String(item.counter))
+    .filter((counter) => /^\d+$/.test(counter)))]
+    .map((counter) => Number(counter))
     .sort((left, right) => left - right);
+  if (!counters.length) return items[0].code;
+
+  const formatCounter = (counter) => String(counter).padStart(2, "0");
   const ranges = [];
   let start = counters[0];
   let end = start;
+  const appendRange = () => {
+    const first = formatCounter(start);
+    const last = formatCounter(end);
+    ranges.push(start === end ? first : `${first}-${last}`);
+  };
+
   counters.slice(1).forEach((counter) => {
     if (counter === end + 1) {
       end = counter;
       return;
     }
-    ranges.push(start === end ? String(start).padStart(2, "0") : `${String(start).padStart(2, "0")}-${String(end).padStart(2, "0")}`);
+    appendRange();
     start = counter;
     end = counter;
   });
-  if (counters.length) {
-    ranges.push(start === end ? String(start).padStart(2, "0") : `${String(start).padStart(2, "0")}-${String(end).padStart(2, "0")}`);
-  }
-  return `${items[0].codePrefix}-[${ranges.join(",")}]`;
+  appendRange();
+  return `${items[0].codePrefix}-[${ranges.join(", ")}]`;
 }
 
 function appendCell(row, value) {
@@ -849,7 +1172,7 @@ function renderInventory() {
   groups.forEach((group) => {
     const row = document.createElement("tr");
     appendCell(row, group.name);
-    appendCell(row, formatCounterRange(group.items).replace(/-00-/, "-"));
+    appendCell(row, formatCounterRange(group.items));
     appendCell(row, formatCurrency(group.price, group.currency || "HUF"));
     appendCell(row, group.items.map((item) => item.serialNumber || "—").join(", "));
     appendCell(row, group.placement);
@@ -1242,6 +1565,31 @@ document.querySelectorAll(".sort-button").forEach((button) => {
   });
 });
 
+importFile.addEventListener("change", async () => {
+  const file = importFile.files?.[0];
+  if (!file) return;
+  try {
+    if (!window.XLSX) throw new Error("Az Excel-olvasó nem töltődött be.");
+    setImportStatus("Fájl beolvasása...");
+    importState.workbook = window.XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: false });
+    importSheet.replaceChildren();
+    importState.workbook.SheetNames.forEach((name) => importSheet.append(new Option(name, name)));
+    importOptions.hidden = false;
+    importPreviewCard.hidden = true;
+    renderImportMapping();
+    setImportStatus(`${file.name}: ${importState.workbook.SheetNames.length} munkalap beolvasva.`, "success");
+  } catch (error) {
+    console.error("Excel-fájl beolvasási hiba:", error);
+    importState.workbook = null;
+    importOptions.hidden = true;
+    setImportStatus("A fájl beolvasása nem sikerült. Ellenőrizd, hogy érvényes Excel-fájlt választottál.", "error");
+  }
+});
+importSheet.addEventListener("change", renderImportMapping);
+importHeaderRow.addEventListener("change", renderImportMapping);
+importPreviewButton.addEventListener("click", importPreview);
+importConfirmButton.addEventListener("click", importRowsToFirestore);
+
 document.querySelectorAll(".navigation-link").forEach((link) => {
   link.addEventListener("click", (event) => {
     const page = link.dataset.page;
@@ -1252,6 +1600,7 @@ document.querySelectorAll(".navigation-link").forEach((link) => {
     event.preventDefault();
     document.querySelectorAll(".inventory-page").forEach((section) => {
       const targetId = page === "inventory" ? "leltar"
+        : page === "import" ? "importalas"
         : page === "parameters" ? "parameterek" : "uj-bevezetes";
       section.hidden = section.id !== targetId;
     });
@@ -1266,6 +1615,8 @@ document.querySelectorAll(".navigation-link").forEach((link) => {
 
 if (window.location.hash === "#uj-bevezetes") {
   document.querySelector('[data-page="entry"]').click();
+} else if (window.location.hash === "#importalas") {
+  document.querySelector('[data-page="import"]').click();
 } else if (window.location.hash === "#parameterek") {
   document.querySelector('[data-page="parameters"]').click();
 } else {

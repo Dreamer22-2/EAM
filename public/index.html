@@ -23,6 +23,10 @@
             <img class="navigation-icon navigation-icon--image" src="/assets/list-icon.svg" alt="" aria-hidden="true" />
             <span>Leltár</span>
           </a>
+          <a class="navigation-link" href="#importalas" data-page="import">
+            <span class="navigation-icon navigation-icon--upload" aria-hidden="true">↑</span>
+            <span>Importálás</span>
+          </a>
           <a class="navigation-link" href="#matricainator" data-page="labels">
             <img class="navigation-icon navigation-icon--image" src="/assets/sticker-icon.svg" alt="" aria-hidden="true" />
             <span>Matricainátor</span>
@@ -192,23 +196,23 @@
           </div>
 
           <div class="inventory-toolbar">
-            <label>
+            <label class="inventory-search-filter">
               Keresés
               <input id="inventory-search" type="search" placeholder="Név, leltári szám, sorozatszám..." />
             </label>
-            <label>
+            <label class="inventory-select-filter">
               Tulajdonos
               <select id="inventory-owner-filter"><option value="">Mindegyik</option></select>
             </label>
-            <label>
+            <label class="inventory-select-filter">
               Eszköztípus
               <select id="inventory-device-type-filter"><option value="">Mindegyik</option></select>
             </label>
-            <label>
+            <label class="inventory-select-filter">
               Típus
               <select id="inventory-model-filter"><option value="">Mindegyik</option></select>
             </label>
-            <label>
+            <label class="inventory-select-filter">
               Gyártó/márka
               <select id="inventory-manufacturer-filter"><option value="">Mindegyik</option></select>
             </label>
@@ -233,6 +237,53 @@
               </thead>
               <tbody id="inventory-body"></tbody>
             </table>
+          </div>
+        </section>
+
+        <section class="inventory-page import-page" id="importalas" hidden>
+          <h1>IMPORTÁLÁS</h1>
+
+          <div class="import-card">
+            <h2>Excel-fájl beolvasása</h2>
+            <p class="import-note">A fájl feldolgozása a böngészőben történik, nem töltjük fel szerverre.</p>
+            <label class="file-input-label" for="import-file">Excel-fájl</label>
+            <input id="import-file" type="file" accept=".xlsx,.xls,.csv" />
+            <p id="import-file-status" class="form-status" role="status" aria-live="polite"></p>
+          </div>
+
+          <div id="import-options" class="import-card" hidden>
+            <div class="import-grid">
+              <label for="import-sheet">Munkalap
+                <select id="import-sheet"></select>
+              </label>
+              <label for="import-header-row">Fejléc sora
+                <input id="import-header-row" type="number" min="1" value="1" />
+              </label>
+              <label for="import-first-row">Első adat sora
+                <input id="import-first-row" type="number" min="1" value="2" />
+              </label>
+              <label for="import-last-row">Utolsó adat sora
+                <input id="import-last-row" type="number" min="1" />
+              </label>
+            </div>
+            <div id="import-mapping" class="import-mapping"></div>
+            <div class="form-actions">
+              <button type="button" id="import-preview-button">Előnézet frissítése</button>
+            </div>
+          </div>
+
+          <div id="import-preview-card" class="import-card" hidden>
+            <div class="page-heading">
+              <h2>Importálási előnézet</h2>
+              <button type="button" id="import-confirm-button">Importálás Firestore-ba</button>
+            </div>
+            <p id="import-preview-status" class="form-status" role="status" aria-live="polite"></p>
+            <div class="table-wrapper">
+              <table class="inventory-table import-preview-table">
+                <thead id="import-preview-head"></thead>
+                <tbody id="import-preview-body"></tbody>
+              </table>
+            </div>
           </div>
         </section>
 
@@ -318,6 +369,7 @@
     </dialog>
 
     <script src="/runtime-config.js"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
     <script type="module" src="/app.js"></script>
   </body>
 </html>
