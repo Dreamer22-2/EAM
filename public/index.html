@@ -36,9 +36,19 @@
             <span>Paraméterek</span>
           </a>
         </nav>
+        <button type="button" id="auth-button" class="auth-button">
+          <img id="auth-button-icon" class="navigation-icon navigation-icon--image" src="/assets/icons/sign-in-2-svgrepo-com.svg" alt="" aria-hidden="true" />
+          <span id="auth-button-label">Bejelentkezés Google-lal</span>
+        </button>
+        <p id="auth-user-label" class="auth-user-label" hidden></p>
       </aside>
 
       <main class="main-content">
+        <section id="auth-gate" class="auth-gate">
+          <h1>BEJELENTKEZÉS SZÜKSÉGES</h1>
+          <p>Az EAM leltár használatához jelentkezz be Google-fiókkal.</p>
+        </section>
+
         <section class="inventory-page" id="uj-bevezetes" hidden>
           <h1>ESZKÖZ BEVEZETÉSE A LELTÁRBA</h1>
 

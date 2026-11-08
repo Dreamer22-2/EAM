@@ -1,5 +1,13 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 import {
+  connectAuthEmulator,
+  getAuth,
+  GoogleAuthProvider,
+  onAuthStateChanged,
+  signInWithPopup,
+  signOut,
+} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+import {
   collection,
   connectFirestoreEmulator,
   doc,
@@ -23,6 +31,7 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
 const db = getFirestore(app);
 const isCodespacesHost = window.location.hostname.endsWith(".app.github.dev");
 const isEmulator = window.location.port === "5000"
@@ -35,6 +44,7 @@ if (isEmulator) {
     ? window.location.hostname.replace(/-5000(?=\.app\.github\.dev$)/, "-8080")
     : window.location.hostname;
   connectFirestoreEmulator(db, emulatorHost, 8080);
+  connectAuthEmulator(auth, `http://${emulatorHost}:9099`, { disableWarnings: true });
   console.info(`Firestore emulator: ${emulatorHost}:8080`);
 }
 
@@ -655,6 +665,93 @@ const importPreviewHead = document.querySelector("#import-preview-head");
 const importPreviewBody = document.querySelector("#import-preview-body");
 const importPreviewButton = document.querySelector("#import-preview-button");
 const importConfirmButton = document.querySelector("#import-confirm-button");
+const authButton = document.querySelector("#auth-button");
+const authButtonIcon = document.querySelector("#auth-button-icon");
+const authButtonLabel = document.querySelector("#auth-button-label");
+const authUserLabel = document.querySelector("#auth-user-label");
+const authGate = document.querySelector("#auth-gate");
+const mainContent = document.querySelector(".main-content");
+let authenticatedUser = null;
+let hasAccess = false;
+
+function setAuthStatus(user, access = false) {
+  authenticatedUser = user;
+  hasAccess = Boolean(user) && access;
+  mainContent.classList.toggle("is-authenticated", hasAccess);
+  authGate.hidden = hasAccess;
+  document.querySelectorAll(".navigation-link").forEach((link) => {
+    link.toggleAttribute("aria-disabled", !hasAccess);
+    link.tabIndex = hasAccess ? 0 : -1;
+  });
+  authButtonIcon.src = user
+    ? "/assets/icons/sign-out-2-svgrepo-com.svg"
+    : "/assets/icons/sign-in-2-svgrepo-com.svg";
+  authButtonLabel.textContent = user ? "Kijelentkezés" : "Bejelentkezés Google-lal";
+  authButton.title = authButtonLabel.textContent;
+  authUserLabel.hidden = !user;
+  authUserLabel.textContent = user?.displayName || user?.email || "";
+  authGate.querySelector("h1").textContent = user && !hasAccess
+    ? "HOZZÁFÉRÉS MEGTAGADVA"
+    : "BEJELENTKEZÉS SZÜKSÉGES";
+  authGate.querySelector("p").textContent = user && !hasAccess
+    ? "A felhasználói fiókod még nincs engedélyezve. Kérd az adminisztrátort, hogy állítsa a hasAccess mezőt true értékre."
+    : "Az EAM leltár használatához jelentkezz be Google-fiókkal.";
+}
+
+async function signInWithGoogle() {
+  try {
+    await signInWithPopup(auth, new GoogleAuthProvider());
+  } catch (error) {
+    console.error("Google-bejelentkezési hiba:", error);
+    authGate.querySelector("p").textContent = "A bejelentkezés nem sikerült. Próbáld újra.";
+  }
+}
+
+async function signOutCurrentUser() {
+  try {
+    await signOut(auth);
+  } catch (error) {
+    console.error("Kijelentkezési hiba:", error);
+  }
+}
+
+authButton.addEventListener("click", () => {
+  if (authenticatedUser) {
+    signOutCurrentUser();
+  } else {
+    signInWithGoogle();
+  }
+});
+
+onAuthStateChanged(auth, async (user) => {
+  setAuthStatus(user, false);
+  if (!user) return;
+  try {
+    const userRef = doc(db, "users", user.uid);
+    const existingUserSnapshot = await getDoc(userRef);
+    const profile = {
+      uid: user.uid,
+      email: user.email || "",
+      displayName: user.displayName || "",
+      photoURL: user.photoURL || "",
+      lastSignInAt: serverTimestamp(),
+    };
+    if (existingUserSnapshot.exists()) {
+      await setDoc(userRef, profile, { merge: true });
+    } else {
+      await setDoc(userRef, { ...profile, hasAccess: false });
+    }
+    const userSnapshot = await getDoc(userRef);
+    const accessGranted = userSnapshot.exists() && userSnapshot.data().hasAccess === true;
+    setAuthStatus(user, accessGranted);
+    if (accessGranted) {
+      document.querySelector('[data-page="inventory"]').click();
+    }
+  } catch (error) {
+    console.error("Felhasználói profil mentési hiba:", error);
+    authGate.querySelector("p").textContent = "A felhasználói profil betöltése nem sikerült.";
+  }
+});
 
 function createIconButtonContent(button, iconPath, label) {
   const icon = document.createElement("img");
@@ -1443,13 +1540,21 @@ function openInventoryDetail(group) {
   document.querySelectorAll(".inventory-page").forEach((section) => {
     section.hidden = section !== inventoryDetail;
   });
+  setActiveNavigation("inventory");
   window.history.replaceState(null, "", "#leltar-reszletek");
   window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function setActiveNavigation(page) {
+  document.querySelectorAll(".navigation-link").forEach((navigationLink) => {
+    navigationLink.classList.toggle("navigation-link--active", navigationLink.dataset.page === page);
+  });
 }
 
 function showInventoryPage() {
   inventoryDetail.hidden = true;
   document.querySelector("#leltar").hidden = false;
+  setActiveNavigation("inventory");
   window.history.replaceState(null, "", "#leltar");
 }
 
@@ -1963,6 +2068,10 @@ importConfirmButton.addEventListener("click", importRowsToFirestore);
 
 document.querySelectorAll(".navigation-link").forEach((link) => {
   link.addEventListener("click", (event) => {
+    if (!hasAccess) {
+      event.preventDefault();
+      return;
+    }
     const page = link.dataset.page;
     if (page === "labels") {
       event.preventDefault();
@@ -1975,21 +2084,11 @@ document.querySelectorAll(".navigation-link").forEach((link) => {
         : page === "parameters" ? "parameterek" : "uj-bevezetes";
       section.hidden = section.id !== targetId;
     });
-    document.querySelectorAll(".navigation-link").forEach((navigationLink) => {
-      navigationLink.classList.toggle("navigation-link--active", navigationLink === link);
-    });
+    setActiveNavigation(page);
     if (page === "inventory") loadInventory();
     if (page === "parameters") renderParameterEditor();
     window.history.replaceState(null, "", link.hash);
   });
 });
 
-if (window.location.hash === "#uj-bevezetes") {
-  document.querySelector('[data-page="entry"]').click();
-} else if (window.location.hash === "#importalas") {
-  document.querySelector('[data-page="import"]').click();
-} else if (window.location.hash === "#parameterek") {
-  document.querySelector('[data-page="parameters"]').click();
-} else {
-  document.querySelector('[data-page="inventory"]').click();
-}
+setAuthStatus(null);
