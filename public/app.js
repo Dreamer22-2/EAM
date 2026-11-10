@@ -1286,6 +1286,15 @@ updateExchangeRateText();
 loadExchangeRates();
 
 function renderInventory() {
+  document.querySelectorAll(".sort-button").forEach((button) => {
+    const header = button.closest("th");
+    if (button.dataset.sort === inventoryState.sort.key) {
+      header.setAttribute("aria-sort", inventoryState.sort.direction);
+    } else {
+      header.removeAttribute("aria-sort");
+    }
+  });
+
   const query = inventorySearch.value.trim().toLocaleLowerCase("hu-HU");
   const filtered = inventoryState.items.filter((item) => {
     const searchable = [item.name, item.code, item.serialNumber, item.placement, item.comment]
@@ -1557,6 +1566,86 @@ function showInventoryPage() {
   setActiveNavigation("inventory");
   window.history.replaceState(null, "", "#leltar");
 }
+
+const stickyTableHeader = document.createElement("div");
+stickyTableHeader.className = "table-sticky-header";
+stickyTableHeader.setAttribute("aria-hidden", "true");
+document.body.append(stickyTableHeader);
+
+const stickyTableHeaderMask = document.createElement("div");
+stickyTableHeaderMask.className = "table-sticky-header-mask";
+stickyTableHeaderMask.setAttribute("aria-hidden", "true");
+document.body.append(stickyTableHeaderMask);
+
+let stickyHeaderUpdatePending = false;
+let stickyHeaderSourceTable = null;
+
+function updateStickyTableHeader() {
+  stickyHeaderUpdatePending = false;
+  const activeTable = [...document.querySelectorAll(".table-wrapper .inventory-table")].find((table) => {
+    const wrapper = table.closest(".table-wrapper");
+    const header = table.tHead;
+    if (!wrapper || !header?.rows.length || wrapper.clientWidth === 0) return false;
+    const headerRect = header.getBoundingClientRect();
+    const wrapperRect = wrapper.getBoundingClientRect();
+    return headerRect.top < 0 && wrapperRect.bottom > headerRect.height;
+  });
+
+  if (!activeTable) {
+    stickyHeaderSourceTable = null;
+    stickyTableHeader.classList.remove("is-visible");
+    stickyTableHeaderMask.classList.remove("is-visible");
+    stickyTableHeader.replaceChildren();
+    return;
+  }
+
+  stickyHeaderSourceTable = activeTable;
+  const wrapper = activeTable.closest(".table-wrapper");
+  const header = activeTable.tHead;
+  const wrapperRect = wrapper.getBoundingClientRect();
+  const headerRect = header.getBoundingClientRect();
+  const clonedTable = activeTable.cloneNode(false);
+  const clonedHeader = header.cloneNode(true);
+  clonedTable.removeAttribute("id");
+  clonedTable.style.width = `${activeTable.offsetWidth}px`;
+  clonedTable.style.minWidth = "0";
+  clonedTable.style.transform = `translateX(-${wrapper.scrollLeft}px)`;
+  clonedTable.append(clonedHeader);
+
+  [...header.rows[0].cells].forEach((cell, index) => {
+    const clonedCell = clonedHeader.rows[0].cells[index];
+    if (clonedCell) clonedCell.style.width = `${cell.getBoundingClientRect().width}px`;
+  });
+
+  stickyTableHeader.style.left = `${wrapperRect.left}px`;
+  stickyTableHeader.style.width = `${wrapperRect.width}px`;
+  stickyTableHeader.style.height = `${headerRect.height + wrapper.clientTop}px`;
+  stickyTableHeaderMask.style.left = stickyTableHeader.style.left;
+  stickyTableHeaderMask.style.width = stickyTableHeader.style.width;
+  stickyTableHeaderMask.style.height = stickyTableHeader.style.height;
+  stickyTableHeader.replaceChildren(clonedTable);
+  stickyTableHeader.classList.add("is-visible");
+  stickyTableHeaderMask.classList.add("is-visible");
+}
+
+stickyTableHeader.addEventListener("click", (event) => {
+  const sortButton = event.target.closest(".sort-button");
+  if (!sortButton || !stickyHeaderSourceTable) return;
+  const sourceButton = [...stickyHeaderSourceTable.tHead.querySelectorAll(".sort-button")]
+    .find((button) => button.dataset.sort === sortButton.dataset.sort);
+  sourceButton?.click();
+  scheduleStickyHeaderUpdate();
+});
+
+function scheduleStickyHeaderUpdate() {
+  if (stickyHeaderUpdatePending) return;
+  stickyHeaderUpdatePending = true;
+  window.requestAnimationFrame(updateStickyTableHeader);
+}
+
+document.addEventListener("scroll", scheduleStickyHeaderUpdate, true);
+window.addEventListener("resize", scheduleStickyHeaderUpdate);
+scheduleStickyHeaderUpdate();
 
 backToInventory.addEventListener("click", showInventoryPage);
 cancelInventoryEdit.addEventListener("click", closeInventoryEdit);
