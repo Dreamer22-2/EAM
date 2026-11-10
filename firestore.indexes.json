@@ -1,4 +1,20 @@
 {
   "indexes": [],
-  "fieldOverrides": []
+  "fieldOverrides": [
+    {
+      "collectionGroup": "eszkozok",
+      "fieldPath": "groups",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "leltariSzamlalok",
+      "fieldPath": "nextByPrefix",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "leltariSzamlalok",
+      "fieldPath": "shardIdsByPrefix",
+      "indexes": []
+    }
+  ]
 }

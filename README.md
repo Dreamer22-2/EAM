@@ -59,6 +59,47 @@ replaced when the import is confirmed. Vertically merged spreadsheet cells are
 also read: a merged inventory-code range is matched to the individual rows
 inside that merged area.
 
+## Firestore inventory storage migration
+
+The inventory uses a versioned nested-map/array layout: `eszkozok` contains one
+document by default and adds a shard only when needed to stay below a
+conservative 700 KiB estimate; `leltariSzamlalok` stores all counters in one
+document. The inventory screen reads the shard documents and the counter
+document, rather than every legacy prefix document. Large inventory fields are
+excluded from automatic indexing because the app filters and sorts them in the
+browser.
+
+The app requires the migration marker before it reads or writes inventory.
+Schedule a short maintenance window so old clients cannot change the legacy
+collections during migration. Authenticate the Firebase Admin SDK using
+Application Default Credentials with access to the project, install the
+maintenance dependency, then preview the migration:
+
+```sh
+npm install
+npm run migrate:inventory -- --project=e5muhely
+```
+
+Review the record count, shard count, and largest estimated document size. The
+script is dry-run by default. To copy the data and verify the new documents
+without deleting the old collections:
+
+```sh
+npm run migrate:inventory -- --project=e5muhely --apply
+```
+
+Deploy the updated app and verify inventory, counters, imports, editing, and
+deletion before removing the old documents. Legacy documents are preserved by
+default. Only after verifying the migrated app, remove them explicitly:
+
+```sh
+npm run migrate:inventory -- --project=e5muhely --apply --delete-legacy
+```
+
+Do not run the cleanup option until the new inventory has been checked and a
+backup is available. The migration utility refuses to overwrite an active
+versioned inventory.
+
 ## Automatic Firebase Hosting deployment
 
 The repository includes GitHub Actions workflows for Firebase Hosting:

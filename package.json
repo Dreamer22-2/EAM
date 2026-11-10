@@ -1,0 +1,12 @@
+{
+  "name": "eam-firestore-maintenance",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "migrate:inventory": "node scripts/migrate-firestore-inventory.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "firebase-admin": "^14.5.0"
+  }
+}

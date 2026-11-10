@@ -11,14 +11,20 @@ import {
   collection,
   connectFirestoreEmulator,
   doc,
-  deleteField,
   getFirestore,
   getDoc,
   getDocs,
+  query,
   runTransaction,
   setDoc,
   serverTimestamp,
+  where,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import {
+  INVENTORY_COUNTER_DOC_ID,
+  INVENTORY_SCHEMA_VERSION,
+  mutateInventoryStorage as mutateInventoryStorageData,
+} from "./inventory-storage.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyC1rhBwGhedFMm8GTAsJ53VnZjakfRHyZo",
@@ -530,15 +536,13 @@ form.addEventListener("submit", async (event) => {
     const data = getFormData();
     const prefix = getCodePrefix(data);
     const counterPrefix = getCounterPrefix(data);
-    const counterRef = doc(db, "leltariSzamlalok", counterPrefix);
-    const inventoryRef = doc(db, "eszkozok", counterPrefix);
 
     await runTransaction(db, async (transaction) => {
-      const counterSnapshot = await transaction.get(counterRef);
-      const inventorySnapshot = await transaction.get(inventoryRef);
-      const currentNext = counterSnapshot.exists() ? counterSnapshot.data().kovetkezo : 0;
+      const counterSnapshot = await transaction.get(inventoryCounterRef);
+      const counterData = counterSnapshot.exists() ? counterSnapshot.data() : {};
+      const currentNext = Number(counterData.nextByPrefix?.[counterPrefix]) || 0;
       console.info("Counter read", {
-        path: `leltariSzamlalok/${counterPrefix}`,
+        path: `leltariSzamlalok/${INVENTORY_COUNTER_DOC_ID}`,
         exists: counterSnapshot.exists(),
         next: currentNext,
         mode: isEmulator ? "emulator" : "production",
@@ -548,38 +552,30 @@ form.addEventListener("submit", async (event) => {
         throw new Error("A kétjegyű sorszámtartomány megtelt ehhez a kódhoz.");
       }
       const leltariSzamok = createInventoryNumbers(prefix, startNumber, data.darabszam);
-      const existingItems = inventorySnapshot.exists()
-        ? inventorySnapshot.data().sorszamok || {}
-        : {};
-      const newItems = { ...existingItems };
-
-      transaction.set(counterRef, {
-        prefix: counterPrefix,
-        kovetkezo: startNumber + data.darabszam,
-        frissitve: serverTimestamp(),
-      });
-      leltariSzamok.forEach((inventoryCode, index) => {
+      const additions = leltariSzamok.map((inventoryCode, index) => {
         const counter = inventoryCode.slice(inventoryCode.lastIndexOf("-") + 1);
-        newItems[counter] = {
-          leltariSzam: inventoryCode,
-          alTipus: data.alTipus,
-          name: data.nev,
-          price: data.egysegErtek,
-          currency: data.penznem,
-          stickerCount: data.matricakSzama,
-          stickerSize: data.matricaMeret,
-          serialNumber: data.sorozatszamok[index] || "",
-          placement: data.tarolasHelyeModja,
-          comment: data.megjegyzes,
-          letrehozva: serverTimestamp(),
+        return {
+          codePrefix: prefix,
+          record: {
+            counter,
+            leltariSzam: inventoryCode,
+            alTipus: data.alTipus,
+            name: data.nev,
+            price: data.egysegErtek,
+            currency: data.penznem,
+            stickerCount: data.matricakSzama,
+            stickerSize: data.matricaMeret,
+            serialNumber: data.sorozatszamok[index] || "",
+            placement: data.tarolasHelyeModja,
+            comment: data.megjegyzes,
+            letrehozva: serverTimestamp(),
+          },
         };
       });
-
-      transaction.set(inventoryRef, {
-        leltariSzamPrefix: counterPrefix,
-        sorszamok: newItems,
-        frissitve: serverTimestamp(),
-      }, { merge: true });
+      await mutateInventoryStorage(transaction, counterSnapshot, {
+        additions,
+        nextValues: { [counterPrefix]: startNumber + data.darabszam },
+      });
     });
 
     form.reset();
@@ -630,6 +626,17 @@ const inventoryState = {
   sort: { key: "code", direction: "ascending" },
   editing: null,
 };
+
+const inventoryCounterRef = doc(db, "leltariSzamlalok", INVENTORY_COUNTER_DOC_ID);
+
+function mutateInventoryStorage(transaction, counterSnapshot, options) {
+  return mutateInventoryStorageData(transaction, counterSnapshot, {
+    ...options,
+    getShardRef: (shardId) => doc(db, "eszkozok", shardId),
+    counterRef: inventoryCounterRef,
+    serverTimestamp,
+  });
+}
 
 const importFields = [
   ["code", "Leltári szám", true],
@@ -996,19 +1003,17 @@ async function importRowsToFirestore() {
       grouped.get(item.codePrefix).push(item);
     });
     for (const [prefix, items] of grouped) {
-      const inventoryRef = doc(db, "eszkozok", prefix);
       const counterPrefix = getCounterPrefixFromInventoryCode(items[0].code);
-      const counterRef = doc(db, "leltariSzamlalok", counterPrefix);
       await runTransaction(db, async (transaction) => {
-        const snapshot = await transaction.get(inventoryRef);
-        const counterSnapshot = await transaction.get(counterRef);
-        const existingItems = snapshot.exists() ? snapshot.data().sorszamok || {} : {};
-        const currentNext = counterSnapshot.exists() ? Number(counterSnapshot.data().kovetkezo) || 0 : 0;
+        const counterSnapshot = await transaction.get(inventoryCounterRef);
+        const counterData = counterSnapshot.exists() ? counterSnapshot.data() : {};
+        const currentNext = Number(counterData.nextByPrefix?.[counterPrefix]) || 0;
         const highestImportedCounter = Math.max(...items.map((item) => Number(item.counter)));
         const nextCounter = Math.max(currentNext, highestImportedCounter + 1);
-        const importedItems = { ...existingItems };
-        items.forEach((item) => {
-          importedItems[item.counter] = {
+        const additions = items.map((item) => ({
+          codePrefix: prefix,
+          record: {
+            counter: item.counter,
             leltariSzam: item.code,
             alTipus: item.alTipus,
             name: item.name,
@@ -1018,18 +1023,12 @@ async function importRowsToFirestore() {
             placement: item.placement,
             comment: item.comment,
             letrehozva: serverTimestamp(),
-          };
+          },
+        }));
+        await mutateInventoryStorage(transaction, counterSnapshot, {
+          additions,
+          nextValues: { [counterPrefix]: nextCounter },
         });
-        transaction.set(inventoryRef, {
-          leltariSzamPrefix: prefix,
-          sorszamok: importedItems,
-          frissitve: serverTimestamp(),
-        }, { merge: true });
-        transaction.set(counterRef, {
-          prefix: counterPrefix,
-          kovetkezo: nextCounter,
-          frissitve: serverTimestamp(),
-        }, { merge: true });
       });
     }
     importPreviewStatus.textContent = `${importState.previewRows.length} sor sikeresen importálva.`;
@@ -1118,22 +1117,31 @@ async function loadInventory() {
   inventoryStatus.textContent = "Leltár betöltése...";
   inventoryStatus.className = "form-status";
   try {
-    const snapshot = await getDocs(collection(db, "eszkozok"));
+    const counterSnapshot = await getDoc(inventoryCounterRef);
+    if (!counterSnapshot.exists()
+      || counterSnapshot.data().schemaVersion !== INVENTORY_SCHEMA_VERSION
+      || counterSnapshot.data().migrationComplete !== true) {
+      throw new Error("A leltár adattára még nincs átállítva. Futtasd előbb az adatköltöztetést.");
+    }
+    const snapshot = await getDocs(query(
+      collection(db, "eszkozok"),
+      where("schemaVersion", "==", INVENTORY_SCHEMA_VERSION),
+    ));
     inventoryState.items = [];
-    snapshot.forEach((parentSnapshot) => {
-      const parentData = parentSnapshot.data();
-      const items = parentData.sorszamok || {};
-      Object.entries(items).forEach(([counter, item]) => {
-        const code = item.leltariSzam || `${parentSnapshot.id}-${String(counter).padStart(2, "0")}`;
-        const codePrefix = getInventoryCodePrefix(code, parentSnapshot.id);
-        inventoryState.items.push({
-          ...item,
-          counter: String(counter).padStart(2, "0"),
-          code,
-          codePrefix,
-          parentId: parentSnapshot.id,
-          parentRef: parentSnapshot.ref,
-          parts: getInventoryParts(codePrefix),
+    snapshot.forEach((shardSnapshot) => {
+      Object.entries(shardSnapshot.data().groups || {}).forEach(([codePrefix, entries]) => {
+        entries.forEach((item) => {
+          const code = item.leltariSzam;
+          inventoryState.items.push({
+            ...item,
+            counter: item.counter || code.slice(code.lastIndexOf("-") + 1),
+            code,
+            codePrefix,
+            parentId: shardSnapshot.id,
+            parentRef: shardSnapshot.ref,
+            shardId: shardSnapshot.id,
+            parts: getInventoryParts(codePrefix),
+          });
         });
       });
     });
@@ -1431,18 +1439,17 @@ function requestInventoryDelete(target, singleItem = false) {
 }
 
 async function deleteInventoryItems(items) {
-  const byParent = new Map();
-  items.forEach((item) => {
-    if (!byParent.has(item.parentRef.path)) byParent.set(item.parentRef.path, { ref: item.parentRef, items: [] });
-    byParent.get(item.parentRef.path).items.push(item);
-  });
-  await Promise.all([...byParent.values()].map(({ ref, items: parentItems }) => runTransaction(db, async (transaction) => {
-    const updates = {};
-    parentItems.forEach((item) => {
-      updates[`sorszamok.${item.counter}`] = deleteField();
+  await runTransaction(db, async (transaction) => {
+    const counterSnapshot = await transaction.get(inventoryCounterRef);
+    await mutateInventoryStorage(transaction, counterSnapshot, {
+      removals: items.map((item) => ({
+        shardId: item.shardId,
+        codePrefix: item.codePrefix,
+        counter: item.counter,
+        code: item.code,
+      })),
     });
-    transaction.update(ref, updates);
-  })));
+  });
 }
 
 async function confirmInventoryDeletion() {
@@ -1674,75 +1681,42 @@ inventoryEditForm.addEventListener("submit", async (event) => {
   };
   try {
     await runTransaction(db, async (transaction) => {
-      const oldInventoryRef = group.parentRef;
       const newPrefix = `${updates.owner}${updates.deviceType}-${updates.manufacturer}-${updates.model}${group.parts.subtype}`;
-      const newInventoryRef = doc(db, "eszkozok", newPrefix);
-      const oldSnapshot = await transaction.get(oldInventoryRef);
-      const newSnapshot = oldInventoryRef.path === newInventoryRef.path
-        ? oldSnapshot
-        : await transaction.get(newInventoryRef);
-      const oldItems = oldSnapshot.exists() ? oldSnapshot.data().sorszamok || {} : {};
-      const newItems = newSnapshot.exists() ? newSnapshot.data().sorszamok || {} : {};
-      const groupCounters = new Set(group.items.map((item) => item.counter));
-      const hasCollision = Object.keys(newItems).some((counter) => (
-        !groupCounters.has(counter) && newPrefix !== group.codePrefix
-      ));
-      if (hasCollision) {
-        throw new Error("A módosított kódhoz már tartozik egy másik leltári tétel ugyanazzal a sorszámmal.");
-      }
       const newCounterPrefix = `${updates.owner}${updates.deviceType}-${updates.manufacturer}-${updates.model}`;
-      const newCounterRef = doc(db, "leltariSzamlalok", newCounterPrefix);
-      const counterSnapshot = await transaction.get(newCounterRef);
-      const existingNext = counterSnapshot.exists() ? Number(counterSnapshot.data().kovetkezo) || 0 : 0;
+      const counterSnapshot = await transaction.get(inventoryCounterRef);
+      const counterData = counterSnapshot.exists() ? counterSnapshot.data() : {};
+      const existingNext = Number(counterData.nextByPrefix?.[newCounterPrefix]) || 0;
       const highestGroupCounter = Math.max(...group.items.map((item) => Number(item.counter)));
 
-      const updatedItems = {};
-      group.items.forEach((item) => {
-        updatedItems[item.counter] = {
-          leltariSzam: `${newPrefix}-${item.counter}`,
-          alTipus: item.alTipus || "",
-          name: updates.name,
-          price: updates.price,
-          currency: updates.currency,
-          serialNumber: item.serialNumber || "",
-          placement: updates.placement,
-          comment: updates.comment,
-          letrehozva: item.letrehozva || serverTimestamp(),
-        };
+      await mutateInventoryStorage(transaction, counterSnapshot, {
+        rejectDuplicateCodes: true,
+        removals: group.items.map((item) => ({
+          shardId: item.shardId,
+          codePrefix: item.codePrefix,
+          counter: item.counter,
+          code: item.code,
+        })),
+        additions: group.items.map((item) => ({
+          codePrefix: newPrefix,
+          record: {
+            counter: item.counter,
+            leltariSzam: `${newPrefix}-${item.counter}`,
+            alTipus: item.alTipus || "",
+            name: updates.name,
+            price: updates.price,
+            currency: updates.currency,
+            stickerCount: item.stickerCount,
+            stickerSize: item.stickerSize,
+            serialNumber: item.serialNumber || "",
+            placement: updates.placement,
+            comment: updates.comment,
+            letrehozva: item.letrehozva || serverTimestamp(),
+          },
+        })),
+        nextValues: {
+          [newCounterPrefix]: Math.max(existingNext, highestGroupCounter + 1),
+        },
       });
-
-      if (newPrefix === group.codePrefix) {
-        transaction.update(oldInventoryRef, {
-          sorszamok: { ...oldItems, ...updatedItems },
-          leltariSzamPrefix: newPrefix,
-          frissitve: serverTimestamp(),
-        });
-      } else {
-        const remainingOldItems = { ...oldItems };
-        group.items.forEach((item) => {
-          delete remainingOldItems[item.counter];
-        });
-        const mergedNewItems = { ...newItems, ...updatedItems };
-        if (Object.keys(remainingOldItems).length) {
-          transaction.update(oldInventoryRef, {
-            sorszamok: remainingOldItems,
-            frissitve: serverTimestamp(),
-          });
-        } else {
-          transaction.delete(oldInventoryRef);
-        }
-        transaction.set(newInventoryRef, {
-          leltariSzamPrefix: newPrefix,
-          sorszamok: mergedNewItems,
-          frissitve: serverTimestamp(),
-        }, { merge: true });
-      }
-
-      transaction.set(newCounterRef, {
-        prefix: newCounterPrefix,
-        kovetkezo: Math.max(existingNext, highestGroupCounter + 1),
-        frissitve: serverTimestamp(),
-      }, { merge: true });
     });
     closeInventoryEdit();
     await loadInventory();
@@ -1776,17 +1750,31 @@ editForm.addEventListener("submit", async (event) => {
   };
   try {
     await runTransaction(db, async (transaction) => {
-      transaction.update(item.parentRef, {
-        [`sorszamok.${item.counter}`]: {
-          leltariSzam: item.code,
-          alTipus: item.alTipus || "",
-          name: updatedItem.name,
-          price: updatedItem.price,
-          serialNumber: updatedItem.serialNumber,
-          placement: updatedItem.placement,
-          comment: updatedItem.comment,
-          letrehozva: item.letrehozva || serverTimestamp(),
-        },
+      const counterSnapshot = await transaction.get(inventoryCounterRef);
+      await mutateInventoryStorage(transaction, counterSnapshot, {
+        removals: [{
+          shardId: item.shardId,
+          codePrefix: item.codePrefix,
+          counter: item.counter,
+          code: item.code,
+        }],
+        additions: [{
+          codePrefix: item.codePrefix,
+          record: {
+            counter: item.counter,
+            leltariSzam: item.code,
+            alTipus: item.alTipus || "",
+            name: updatedItem.name,
+            price: updatedItem.price,
+            currency: updatedItem.currency || "HUF",
+            stickerCount: updatedItem.stickerCount,
+            stickerSize: updatedItem.stickerSize,
+            serialNumber: updatedItem.serialNumber,
+            placement: updatedItem.placement,
+            comment: updatedItem.comment,
+            letrehozva: item.letrehozva || serverTimestamp(),
+          },
+        }],
       });
     });
     editDialog.close();
@@ -1801,11 +1789,7 @@ editForm.addEventListener("submit", async (event) => {
 async function deleteInventoryItem(item) {
   if (!window.confirm(`Biztosan törlöd a(z) ${item.code} tételt?`)) return;
   try {
-    await runTransaction(db, async (transaction) => {
-      transaction.update(item.parentRef, {
-        [`sorszamok.${item.counter}`]: deleteField(),
-      });
-    });
+    await deleteInventoryItems([item]);
     await loadInventory();
   } catch (error) {
     console.error("Leltári tétel törlési hiba:", error);
