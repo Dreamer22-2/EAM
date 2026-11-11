@@ -100,6 +100,17 @@ Do not run the cleanup option until the new inventory has been checked and a
 backup is available. The migration utility refuses to overwrite an active
 versioned inventory.
 
+For an intentionally empty local Firestore emulator, initialize the migration
+marker before using the app. With the emulator running, this writes an empty v2
+inventory and counter document to the emulator only:
+
+```sh
+FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 npm run migrate:inventory -- --project=e5muhely --apply
+```
+
+For an emulator containing legacy inventory, omit `--apply` first to preview
+the migration, then apply it after checking the preview counts.
+
 ## Automatic Firebase Hosting deployment
 
 The repository includes GitHub Actions workflows for Firebase Hosting:

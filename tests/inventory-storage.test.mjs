@@ -87,14 +87,18 @@ test("refuses to mutate before migration is complete", async () => {
 test("adds records and updates the counter atomically", async () => {
   const harness = createHarness();
   const code = "E-RO-UL-SP-01";
+  const createdAt = new Date("2026-11-10T20:00:00.000Z");
   await harness.mutate(counterData(), {
-    additions: [{ codePrefix: "E-RO-UL-SP", record: inventoryRecord(code) }],
+    additions: [{
+      codePrefix: "E-RO-UL-SP",
+      record: inventoryRecord(code, { letrehozva: createdAt }),
+    }],
     nextValues: { "E-RO-UL": 2 },
   });
 
   const shard = harness.documents.get(getInventoryShardId(0));
   const counters = harness.documents.get(INVENTORY_COUNTER_DOC_ID);
-  assert.deepEqual(shard.groups["E-RO-UL-SP"], [inventoryRecord(code)]);
+  assert.deepEqual(shard.groups["E-RO-UL-SP"], [inventoryRecord(code, { letrehozva: createdAt })]);
   assert.deepEqual(counters.nextByPrefix, { "E-RO-UL": 2 });
   assert.deepEqual(counters.shardIdsByPrefix["E-RO-UL-SP"], [getInventoryShardId(0)]);
   assert.equal(counters.updatedAt, timestamp);

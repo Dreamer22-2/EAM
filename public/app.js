@@ -447,7 +447,7 @@ function getFormData() {
     sorozatszamok: data.getAll("serialNumbers").map((value) => value.trim()).filter(Boolean),
     tarolasHelyeModja: data.get("storage").trim(),
     megjegyzes: data.get("notes").trim(),
-    letrehozva: serverTimestamp(),
+    letrehozva: new Date(),
   };
 }
 
@@ -568,7 +568,7 @@ form.addEventListener("submit", async (event) => {
             serialNumber: data.sorozatszamok[index] || "",
             placement: data.tarolasHelyeModja,
             comment: data.megjegyzes,
-            letrehozva: serverTimestamp(),
+            letrehozva: data.letrehozva,
           },
         };
       });
@@ -997,6 +997,7 @@ async function importRowsToFirestore() {
   importConfirmButton.disabled = true;
   importPreviewStatus.textContent = "Importálás folyamatban...";
   try {
+    const importedAt = new Date();
     const grouped = new Map();
     importState.previewRows.forEach((item) => {
       if (!grouped.has(item.codePrefix)) grouped.set(item.codePrefix, []);
@@ -1022,7 +1023,7 @@ async function importRowsToFirestore() {
             serialNumber: item.serialNumber,
             placement: item.placement,
             comment: item.comment,
-            letrehozva: serverTimestamp(),
+            letrehozva: importedAt,
           },
         }));
         await mutateInventoryStorage(transaction, counterSnapshot, {
@@ -1681,6 +1682,7 @@ inventoryEditForm.addEventListener("submit", async (event) => {
   };
   try {
     await runTransaction(db, async (transaction) => {
+      const fallbackCreatedAt = new Date();
       const newPrefix = `${updates.owner}${updates.deviceType}-${updates.manufacturer}-${updates.model}${group.parts.subtype}`;
       const newCounterPrefix = `${updates.owner}${updates.deviceType}-${updates.manufacturer}-${updates.model}`;
       const counterSnapshot = await transaction.get(inventoryCounterRef);
@@ -1710,7 +1712,7 @@ inventoryEditForm.addEventListener("submit", async (event) => {
             serialNumber: item.serialNumber || "",
             placement: updates.placement,
             comment: updates.comment,
-            letrehozva: item.letrehozva || serverTimestamp(),
+            letrehozva: item.letrehozva || fallbackCreatedAt,
           },
         })),
         nextValues: {
@@ -1750,6 +1752,7 @@ editForm.addEventListener("submit", async (event) => {
   };
   try {
     await runTransaction(db, async (transaction) => {
+      const fallbackCreatedAt = new Date();
       const counterSnapshot = await transaction.get(inventoryCounterRef);
       await mutateInventoryStorage(transaction, counterSnapshot, {
         removals: [{
@@ -1772,7 +1775,7 @@ editForm.addEventListener("submit", async (event) => {
             serialNumber: updatedItem.serialNumber,
             placement: updatedItem.placement,
             comment: updatedItem.comment,
-            letrehozva: item.letrehozva || serverTimestamp(),
+            letrehozva: item.letrehozva || fallbackCreatedAt,
           },
         }],
       });
