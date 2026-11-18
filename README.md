@@ -59,6 +59,16 @@ replaced when the import is confirmed. Vertically merged spreadsheet cells are
 also read: a merged inventory-code range is matched to the individual rows
 inside that merged area.
 
+## HERMA sticker label export
+
+The **Matricainátor** page exports the inventory to an `.xlsx` file for HERMA
+Label Assistant Online, article number 4461. The worksheet has one header row
+(`Name`, `IC`, `SN`) and one row for each individual inventory item, without
+grouping. Items marked with sticker size **Nincs** are excluded. The export is
+generated in the browser and is not uploaded.
+On the inventory page, select one or more groups to delete them or bulk-update
+their sticker size.
+
 ## Firestore inventory storage migration
 
 The inventory uses a versioned nested-map/array layout: `eszkozok` contains one
@@ -100,16 +110,19 @@ Do not run the cleanup option until the new inventory has been checked and a
 backup is available. The migration utility refuses to overwrite an active
 versioned inventory.
 
-For an intentionally empty local Firestore emulator, initialize the migration
-marker before using the app. With the emulator running, this writes an empty v2
-inventory and counter document to the emulator only:
+When the app opens against a database with no inventory or counter documents,
+it initializes the empty v2 counter document automatically. For an emulator,
+you can also initialize it explicitly while the emulator is running:
 
 ```sh
 FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 npm run migrate:inventory -- --project=e5muhely --apply
 ```
 
 For an emulator containing legacy inventory, omit `--apply` first to preview
-the migration, then apply it after checking the preview counts.
+the migration, then apply it after checking the preview counts. If the app
+finds any documents in either inventory collection without the v2 counter
+marker, it continues to require the migration rather than assuming that
+existing data is safe to ignore.
 
 ## Automatic Firebase Hosting deployment
 

@@ -159,6 +159,40 @@ test("replaces imported duplicate codes while preserving unrelated records", asy
   ]);
 });
 
+test("updates sticker size for multiple selected records without changing other fields", async () => {
+  const prefix = "E-RO-UL-SP";
+  const shardId = getInventoryShardId(0);
+  const records = [
+    inventoryRecord(`${prefix}-01`, { stickerSize: "small", serialNumber: "SN-1" }),
+    inventoryRecord(`${prefix}-02`, { stickerSize: "small", serialNumber: "SN-2" }),
+  ];
+  const harness = createHarness({
+    [shardId]: {
+      schemaVersion: INVENTORY_SCHEMA_VERSION,
+      groups: { [prefix]: records },
+    },
+  });
+
+  await harness.mutate(counterData({
+    shardIdsByPrefix: { [prefix]: [shardId] },
+  }), {
+    removals: records.map((record) => ({
+      shardId,
+      codePrefix: prefix,
+      code: record.leltariSzam,
+    })),
+    additions: records.map((record) => ({
+      codePrefix: prefix,
+      record: { ...record, stickerSize: "none" },
+    })),
+  });
+
+  assert.deepEqual(
+    harness.documents.get(shardId).groups[prefix],
+    records.map((record) => ({ ...record, stickerSize: "none" })),
+  );
+});
+
 test("rejects a conflicting edit without changing stored data", async () => {
   const prefix = "E-RO-UL-SP";
   const shardId = getInventoryShardId(0);

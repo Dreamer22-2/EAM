@@ -151,6 +151,10 @@
                   <span class="form-label">Matrica méret:</span>
                   <div class="radio-options">
                     <label>
+                      <input type="radio" name="stickerSize" value="none" />
+                      <span>Nincs</span>
+                    </label>
+                    <label>
                       <input type="radio" name="stickerSize" value="small" />
                       <span>Kicsi</span>
                     </label>
@@ -236,10 +240,32 @@
           </div>
 
           <p id="inventory-status" class="form-status" role="status" aria-live="polite"></p>
+          <div id="inventory-bulk-actions" class="inventory-bulk-actions" hidden>
+            <p id="inventory-selection-status" role="status" aria-live="polite"></p>
+            <button type="button" id="delete-selected-inventory" class="danger-button">
+              <img class="button-icon" src="/assets/icons/delete-alt-svgrepo-com.svg" alt="" aria-hidden="true" />
+              Kijelöltek törlése
+            </button>
+            <label for="bulk-sticker-size">Matrica méret
+              <select id="bulk-sticker-size">
+                <option value="none">Nincs</option>
+                <option value="small">Kicsi</option>
+                <option value="medium">Közepes</option>
+                <option value="big">Nagy</option>
+              </select>
+            </label>
+            <button type="button" id="apply-bulk-sticker-size" class="secondary-button">
+              Matrica méret módosítása
+            </button>
+            <button type="button" id="clear-inventory-selection" class="secondary-button">
+              Kijelölés törlése
+            </button>
+          </div>
           <div class="table-wrapper">
-            <table class="inventory-table">
+            <table class="inventory-table inventory-list-table">
               <thead>
                 <tr>
+                  <th>Kijelölés</th>
                   <th class="sortable-column"><button type="button" class="sort-button" data-sort="name">Név</button></th>
                   <th class="sortable-column" aria-sort="ascending"><button type="button" class="sort-button" data-sort="code">Leltári szám</button></th>
                   <th class="sortable-column"><button type="button" class="sort-button" data-sort="price">Egységérték</button></th>
@@ -306,6 +332,31 @@
                 <thead id="import-preview-head"></thead>
                 <tbody id="import-preview-body"></tbody>
               </table>
+            </div>
+          </div>
+        </section>
+
+        <section class="inventory-page" id="matricainator" hidden>
+          <h1>MATRICAINÁTOR</h1>
+
+          <div class="import-card">
+            <h2>HERMA címkeadatok exportálása</h2>
+            <p class="import-note">
+              A HERMA Label Assistant Online alkalmazásához készít Excel-fájlt.
+              Cikkszám: 4461.
+              <a href="https://www.herma.co.uk/office-home/free-software/label-assistant-online/"
+                target="_blank" rel="noopener noreferrer">HERMA Label Assistant Online</a>
+            </p>
+            <p class="import-note">
+              Minden leltári tétel külön sorba kerül a nevével, leltári számával (IC)
+              és sorozatszámával (SN). A fájl egy fejlécsort tartalmaz.
+            </p>
+            <div class="form-actions">
+              <button type="button" id="export-sticker-labels">
+                <img class="button-icon" src="/assets/icons/diskette-svgrepo-com.svg" alt="" aria-hidden="true" />
+                Excel-fájl letöltése
+              </button>
+              <p id="sticker-export-status" class="form-status" role="status" aria-live="polite"></p>
             </div>
           </div>
         </section>

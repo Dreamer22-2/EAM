@@ -23,6 +23,7 @@ import {
 import {
   INVENTORY_COUNTER_DOC_ID,
   INVENTORY_SCHEMA_VERSION,
+  getInventoryShardId,
   mutateInventoryStorage as mutateInventoryStorageData,
 } from "./inventory-storage.js";
 
@@ -608,6 +609,14 @@ const inventoryModelFilter = document.querySelector("#inventory-model-filter");
 const inventoryManufacturerFilter = document.querySelector("#inventory-manufacturer-filter");
 const applyInventoryFilters = document.querySelector("#apply-inventory-filters");
 const clearInventoryFilters = document.querySelector("#clear-inventory-filters");
+const inventoryBulkActions = document.querySelector("#inventory-bulk-actions");
+const inventorySelectionStatus = document.querySelector("#inventory-selection-status");
+const deleteSelectedInventoryButton = document.querySelector("#delete-selected-inventory");
+const bulkStickerSize = document.querySelector("#bulk-sticker-size");
+const applyBulkStickerSizeButton = document.querySelector("#apply-bulk-sticker-size");
+const clearInventorySelectionButton = document.querySelector("#clear-inventory-selection");
+const stickerExportButton = document.querySelector("#export-sticker-labels");
+const stickerExportStatus = document.querySelector("#sticker-export-status");
 const inventoryDetail = document.querySelector("#inventory-detail");
 const inventoryDetailContent = document.querySelector("#inventory-detail-content");
 const backToInventory = document.querySelector("#back-to-inventory");
@@ -623,6 +632,7 @@ const editDialog = document.querySelector("#edit-dialog");
 const editForm = document.querySelector("#edit-form");
 const inventoryState = {
   items: [],
+  selectedCodes: new Set(),
   sort: { key: "code", direction: "ascending" },
   editing: null,
 };
@@ -1114,11 +1124,44 @@ function populateFilter(select, values, catalogKey) {
   select.value = values.has(currentValue) ? currentValue : "";
 }
 
+function getStickerExportItems() {
+  return inventoryState.items
+    .filter((item) => item.stickerSize !== "none")
+    .sort((left, right) => left.code.localeCompare(right.code, "hu"));
+}
+
 async function loadInventory() {
   inventoryStatus.textContent = "Leltár betöltése...";
   inventoryStatus.className = "form-status";
+  stickerExportButton.disabled = true;
+  stickerExportStatus.textContent = "Leltár betöltése...";
+  stickerExportStatus.className = "form-status";
   try {
-    const counterSnapshot = await getDoc(inventoryCounterRef);
+    let counterSnapshot = await getDoc(inventoryCounterRef);
+    if (!counterSnapshot.exists()) {
+      const [inventorySnapshot, counterCollectionSnapshot] = await Promise.all([
+        getDocs(collection(db, "eszkozok")),
+        getDocs(collection(db, "leltariSzamlalok")),
+      ]);
+      if (!inventorySnapshot.empty || !counterCollectionSnapshot.empty) {
+        throw new Error("A leltár adattára még nincs átállítva. Futtasd előbb az adatköltöztetést.");
+      }
+
+      await runTransaction(db, async (transaction) => {
+        const currentCounter = await transaction.get(inventoryCounterRef);
+        if (currentCounter.exists()) return;
+        transaction.set(inventoryCounterRef, {
+          schemaVersion: INVENTORY_SCHEMA_VERSION,
+          migrationComplete: true,
+          nextByPrefix: {},
+          shardIdsByPrefix: {},
+          activeShardId: getInventoryShardId(0),
+          nextShardNumber: 0,
+          updatedAt: serverTimestamp(),
+        });
+      });
+      counterSnapshot = await getDoc(inventoryCounterRef);
+    }
     if (!counterSnapshot.exists()
       || counterSnapshot.data().schemaVersion !== INVENTORY_SCHEMA_VERSION
       || counterSnapshot.data().migrationComplete !== true) {
@@ -1147,16 +1190,53 @@ async function loadInventory() {
       });
     });
 
+    const inventoryCodes = new Set(inventoryState.items.map((item) => item.code));
+    inventoryState.selectedCodes = new Set(
+      [...inventoryState.selectedCodes].filter((code) => inventoryCodes.has(code)),
+    );
     populateFilter(inventoryOwnerFilter, new Set(inventoryState.items.map((item) => item.parts.owner)), "owner");
     populateFilter(inventoryDeviceTypeFilter, new Set(inventoryState.items.map((item) => item.parts.deviceType)), "deviceType");
     populateFilter(inventoryModelFilter, new Set(inventoryState.items.map((item) => item.parts.model)), "model");
     populateFilter(inventoryManufacturerFilter, new Set(inventoryState.items.map((item) => item.parts.manufacturer)), "manufacturer");
     inventoryStatus.textContent = "";
+    const exportableItems = getStickerExportItems();
+    stickerExportButton.disabled = exportableItems.length === 0;
+    stickerExportStatus.textContent = exportableItems.length
+      ? `${exportableItems.length} egyedi leltári tétel exportálható.`
+      : "Nincs exportálható leltári tétel (a „Nincs” matricaméretű tételek kimaradnak).";
+    stickerExportStatus.className = "form-status";
     renderInventory();
   } catch (error) {
     console.error("Leltár betöltési hiba:", error);
     inventoryStatus.textContent = "A leltár betöltése nem sikerült.";
     inventoryStatus.className = "form-status form-status--error";
+    stickerExportStatus.textContent = "A leltár betöltése nem sikerült, ezért az export nem készíthető el.";
+    stickerExportStatus.className = "form-status form-status--error";
+  }
+}
+
+function exportStickerLabels() {
+  try {
+    if (!window.XLSX) throw new Error("Az Excel-készítő nem töltődött be.");
+    const items = getStickerExportItems();
+    if (!items.length) throw new Error("Nincs exportálható leltári tétel.");
+
+    const rows = [
+      ["Name", "IC", "SN"],
+      ...items.map((item) => [item.name || "", item.code || "", item.serialNumber || ""]),
+    ];
+    const worksheet = window.XLSX.utils.aoa_to_sheet(rows);
+    const workbook = window.XLSX.utils.book_new();
+    window.XLSX.utils.book_append_sheet(workbook, worksheet, "Labels");
+    window.XLSX.writeFile(workbook, "EAM-HERMA-4461.xlsx");
+    stickerExportStatus.textContent = `${items.length} leltári tétel exportálva.`;
+    stickerExportStatus.className = "form-status form-status--success";
+  } catch (error) {
+    console.error("Matricainátor exportálási hiba:", error);
+    stickerExportStatus.textContent = error instanceof Error
+      ? error.message
+      : "Az Excel-exportálás nem sikerült.";
+    stickerExportStatus.className = "form-status form-status--error";
   }
 }
 
@@ -1330,6 +1410,27 @@ function renderInventory() {
     row.tabIndex = 0;
     row.setAttribute("role", "button");
     row.setAttribute("aria-label", `${group.name || "Leltári tétel"} részleteinek megnyitása`);
+    const selectedCount = group.items.filter((item) => inventoryState.selectedCodes.has(item.code)).length;
+    const selectionCell = document.createElement("td");
+    const selection = document.createElement("input");
+    selection.type = "checkbox";
+    selection.className = "inventory-row-select";
+    selection.checked = selectedCount === group.items.length;
+    selection.indeterminate = selectedCount > 0 && selectedCount < group.items.length;
+    selection.setAttribute("aria-label", `${group.name || "Leltári tétel"} kijelölése`);
+    selection.addEventListener("click", (event) => event.stopPropagation());
+    selection.addEventListener("keydown", (event) => event.stopPropagation());
+    selection.addEventListener("change", (event) => {
+      event.stopPropagation();
+      group.items.forEach((item) => {
+        if (selection.checked) inventoryState.selectedCodes.add(item.code);
+        else inventoryState.selectedCodes.delete(item.code);
+      });
+      renderInventory();
+    });
+    selectionCell.append(selection);
+    row.append(selectionCell);
+    row.classList.toggle("is-selected", selectedCount > 0);
     appendCell(row, group.name);
     appendCell(row, formatCounterRange(group.items));
     appendCell(row, formatCurrency(group.price, group.currency || "HUF"));
@@ -1356,11 +1457,25 @@ function renderInventory() {
   if (!groups.length) {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
-    cell.colSpan = 7;
+    cell.colSpan = 8;
     cell.textContent = "Nincs megjeleníthető leltári tétel.";
     row.append(cell);
     inventoryBody.append(row);
   }
+  updateInventorySelectionActions();
+}
+
+function getSelectedInventoryItems() {
+  return inventoryState.items.filter((item) => inventoryState.selectedCodes.has(item.code));
+}
+
+function updateInventorySelectionActions() {
+  const selectedItems = getSelectedInventoryItems();
+  const selectedGroups = groupInventoryItems(selectedItems).length;
+  inventoryBulkActions.hidden = selectedItems.length === 0;
+  inventorySelectionStatus.textContent = `${selectedGroups} csoport, ${selectedItems.length} tétel kijelölve.`;
+  deleteSelectedInventoryButton.disabled = selectedItems.length === 0;
+  applyBulkStickerSizeButton.disabled = selectedItems.length === 0;
 }
 
 function createIconAction(iconName, label, handler, danger = false) {
@@ -1439,6 +1554,16 @@ function requestInventoryDelete(target, singleItem = false) {
   confirmInventoryDelete.focus();
 }
 
+function requestSelectedInventoryDelete() {
+  const items = getSelectedInventoryItems();
+  if (!items.length) return;
+  const groupCount = groupInventoryItems(items).length;
+  inventoryState.pendingDelete = { items, singleItem: false, bulk: true };
+  inventoryConfirmMessage.textContent = `Biztosan törlöd a(z) ${groupCount} kijelölt csoport összesen ${items.length} leltári tételét?`;
+  inventoryConfirmModal.hidden = false;
+  confirmInventoryDelete.focus();
+}
+
 async function deleteInventoryItems(items) {
   await runTransaction(db, async (transaction) => {
     const counterSnapshot = await transaction.get(inventoryCounterRef);
@@ -1453,6 +1578,35 @@ async function deleteInventoryItems(items) {
   });
 }
 
+async function updateInventoryStickerSize(items, stickerSize) {
+  await runTransaction(db, async (transaction) => {
+    const counterSnapshot = await transaction.get(inventoryCounterRef);
+    await mutateInventoryStorage(transaction, counterSnapshot, {
+      removals: items.map((item) => ({
+        shardId: item.shardId,
+        codePrefix: item.codePrefix,
+        counter: item.counter,
+        code: item.code,
+      })),
+      additions: items.map((item) => {
+        const {
+          code,
+          codePrefix,
+          parentId,
+          parentRef,
+          shardId,
+          parts,
+          ...record
+        } = item;
+        return {
+          codePrefix,
+          record: { ...record, stickerSize },
+        };
+      }),
+    });
+  });
+}
+
 async function confirmInventoryDeletion() {
   const pending = inventoryState.pendingDelete;
   if (!pending) return;
@@ -1461,6 +1615,7 @@ async function confirmInventoryDeletion() {
     await deleteInventoryItems(pending.items);
     inventoryConfirmModal.hidden = true;
     inventoryState.pendingDelete = null;
+    if (pending.bulk) inventoryState.selectedCodes.clear();
     await loadInventory();
     if (!inventoryDetail.hidden) showInventoryPage();
   } catch (error) {
@@ -1469,6 +1624,29 @@ async function confirmInventoryDeletion() {
     inventoryStatus.className = "form-status form-status--error";
   } finally {
     confirmInventoryDelete.disabled = false;
+  }
+}
+
+async function applyBulkStickerSize() {
+  const items = getSelectedInventoryItems();
+  if (!items.length) return;
+  applyBulkStickerSizeButton.disabled = true;
+  deleteSelectedInventoryButton.disabled = true;
+  inventoryStatus.textContent = "Matrica méret módosítása...";
+  inventoryStatus.className = "form-status";
+  try {
+    await updateInventoryStickerSize(items, bulkStickerSize.value);
+    await loadInventory();
+    if (!inventoryStatus.classList.contains("form-status--error")) {
+      inventoryStatus.textContent = `${items.length} leltári tétel matricamérete módosítva.`;
+      inventoryStatus.className = "form-status form-status--success";
+    }
+  } catch (error) {
+    console.error("Tömeges matricaméret-módosítási hiba:", error);
+    inventoryStatus.textContent = "A kijelölt tételek matricaméretének módosítása nem sikerült.";
+    inventoryStatus.className = "form-status form-status--error";
+  } finally {
+    updateInventorySelectionActions();
   }
 }
 
@@ -1657,6 +1835,12 @@ scheduleStickyHeaderUpdate();
 
 backToInventory.addEventListener("click", showInventoryPage);
 cancelInventoryEdit.addEventListener("click", closeInventoryEdit);
+deleteSelectedInventoryButton.addEventListener("click", requestSelectedInventoryDelete);
+applyBulkStickerSizeButton.addEventListener("click", applyBulkStickerSize);
+clearInventorySelectionButton.addEventListener("click", () => {
+  inventoryState.selectedCodes.clear();
+  renderInventory();
+});
 inventoryEditForm.elements.price.addEventListener("input", updateInventoryEditHufValue);
 inventoryEditForm.elements.currency.addEventListener("change", updateInventoryEditHufValue);
 cancelInventoryDelete.addEventListener("click", () => {
@@ -2098,6 +2282,7 @@ renderParameterEditor();
 
 document.querySelector("#cancel-edit").addEventListener("click", () => editDialog.close());
 document.querySelector("#refresh-inventory").addEventListener("click", loadInventory);
+stickerExportButton.addEventListener("click", exportStickerLabels);
 applyInventoryFilters.addEventListener("click", renderInventory);
 clearInventoryFilters.addEventListener("click", () => {
   inventorySearch.value = "";
@@ -2149,19 +2334,16 @@ document.querySelectorAll(".navigation-link").forEach((link) => {
       return;
     }
     const page = link.dataset.page;
-    if (page === "labels") {
-      event.preventDefault();
-      return;
-    }
     event.preventDefault();
     document.querySelectorAll(".inventory-page").forEach((section) => {
       const targetId = page === "inventory" ? "leltar"
         : page === "import" ? "importalas"
+        : page === "labels" ? "matricainator"
         : page === "parameters" ? "parameterek" : "uj-bevezetes";
       section.hidden = section.id !== targetId;
     });
     setActiveNavigation(page);
-    if (page === "inventory") loadInventory();
+    if (page === "inventory" || page === "labels") loadInventory();
     if (page === "parameters") renderParameterEditor();
     window.history.replaceState(null, "", link.hash);
   });

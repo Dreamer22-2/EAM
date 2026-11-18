@@ -486,6 +486,48 @@ body {
   white-space: nowrap;
 }
 
+.inventory-bulk-actions {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0 0 14px;
+  padding: 14px 16px;
+  border: 1px solid #454545;
+  border-radius: 10px;
+  background: #181818;
+}
+
+.inventory-bulk-actions[hidden] {
+  display: none;
+}
+
+.inventory-bulk-actions p {
+  flex: 1 1 100%;
+  margin: 0 0 2px;
+  color: var(--muted);
+}
+
+.inventory-bulk-actions label {
+  display: grid;
+  min-width: 130px;
+  gap: 4px;
+  color: var(--muted);
+  font-size: var(--small-text-size);
+  font-weight: 700;
+}
+
+.inventory-bulk-actions select {
+  min-width: 130px;
+}
+
+.inventory-bulk-actions button {
+  min-height: 34px;
+  padding: 7px 12px;
+  font-size: var(--control-text-size);
+  font-weight: 700;
+}
+
 .table-wrapper {
   border: 1px solid #454545;
   border-radius: 12px;
@@ -562,6 +604,31 @@ body {
 .inventory-table td:last-child {
   width: 1%;
   white-space: nowrap;
+}
+
+.inventory-list-table th:first-child,
+.inventory-list-table td:first-child {
+  width: 1%;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.inventory-row-select {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--orange);
+  vertical-align: middle;
+}
+
+.inventory-list-table tbody tr.is-selected td {
+  background: rgb(240 82 43 / 9%);
+}
+
+.inventory-list-table tbody tr.is-selected:hover td,
+.inventory-list-table tbody tr.is-selected:focus-visible td {
+  background: rgb(50 121 199 / 14%);
 }
 
 .inventory-table tbody tr:last-child td {
