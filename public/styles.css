@@ -622,15 +622,6 @@ body {
   vertical-align: middle;
 }
 
-.inventory-list-table tbody tr.is-selected td {
-  background: rgb(240 82 43 / 9%);
-}
-
-.inventory-list-table tbody tr.is-selected:hover td,
-.inventory-list-table tbody tr.is-selected:focus-visible td {
-  background: rgb(50 121 199 / 14%);
-}
-
 .inventory-table tbody tr:last-child td {
   border-bottom: 0;
 }
@@ -646,6 +637,15 @@ body {
 .inventory-table tbody tr[data-inventory-group]:hover td,
 .inventory-table tbody tr[data-inventory-group]:focus-visible td {
   background: rgb(50 121 199 / 14%);
+}
+
+.inventory-list-table tbody > tr.is-selected > td {
+  background-color: #582719;
+}
+
+.inventory-list-table tbody > tr.is-selected:hover > td,
+.inventory-list-table tbody > tr.is-selected:focus-visible > td {
+  background-color: #713020;
 }
 
 .inventory-detail-page .page-heading {
