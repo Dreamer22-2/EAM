@@ -269,6 +269,32 @@ body {
   margin: 0 0 12px;
 }
 
+.sticker-done-log-layout {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.8fr) minmax(300px, 1.2fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.sticker-done-log-list {
+  display: grid;
+  gap: 8px;
+}
+
+.sticker-done-log-entry {
+  width: 100%;
+  text-align: left;
+}
+
+.sticker-done-log-items {
+  padding-left: 22px;
+  overflow-wrap: anywhere;
+}
+
+.sticker-done-log-details {
+  min-width: 0;
+}
+
 .import-note {
   margin: 0 0 18px;
   color: var(--muted);
@@ -1218,6 +1244,10 @@ button:disabled {
   .import-grid,
   .import-mapping {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .sticker-done-log-layout {
+    grid-template-columns: 1fr;
   }
 
   .inventory-detail-grid {

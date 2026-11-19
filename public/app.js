@@ -8,29 +8,28 @@ import {
   signOut,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import {
-  connectFunctionsEmulator,
-  getFunctions,
-  httpsCallable,
-} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js";
-import {
   collection,
   connectFirestoreEmulator,
   doc,
   getFirestore,
   getDoc,
   getDocs,
-  query,
   runTransaction,
   setDoc,
   serverTimestamp,
-  where,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import {
   INVENTORY_COUNTER_DOC_ID,
   INVENTORY_SCHEMA_VERSION,
   getInventoryShardId,
   mutateInventoryStorage as mutateInventoryStorageData,
+  updateInventoryRecordTags,
 } from "./inventory-storage.js";
+import { findSubtypePair } from "./subtype-editor.js";
+import {
+  createStickerExportRows,
+  getStickerExportItems as selectStickerExportItems,
+} from "./sticker-export.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyC1rhBwGhedFMm8GTAsJ53VnZjakfRHyZo",
@@ -45,8 +44,6 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const functions = getFunctions(app, "europe-central2");
-const bootstrapFirstUser = httpsCallable(functions, "bootstrapFirstUser");
 const isCodespacesHost = window.location.hostname.endsWith(".app.github.dev");
 const isEmulator = window.location.port === "5000"
   || window.location.hostname === "localhost"
@@ -57,12 +54,8 @@ if (isEmulator) {
   const emulatorHost = isCodespacesHost
     ? window.location.hostname.replace(/-5000(?=\.app\.github\.dev$)/, "-8080")
     : window.location.hostname;
-  const functionsEmulatorHost = isCodespacesHost
-    ? window.location.hostname.replace(/-5000(?=\.app\.github\.dev$)/, "-5001")
-    : window.location.hostname;
   connectFirestoreEmulator(db, emulatorHost, 8080);
   connectAuthEmulator(auth, `http://${emulatorHost}:9099`, { disableWarnings: true });
-  connectFunctionsEmulator(functions, functionsEmulatorHost, 5001);
   console.info(`Firestore emulator: ${emulatorHost}:8080`);
 }
 
@@ -79,6 +72,7 @@ const mnbHufRates = {
   USD: null,
 };
 const exchangeRateEndpoint = window.EAM_EXCHANGE_RATE_ENDPOINT || "";
+const inventoryApiEndpoint = window.EAM_INVENTORY_API_ENDPOINT || "";
 const eurRateText = document.querySelector("#eur-rate");
 const usdRateText = document.querySelector("#usd-rate");
 
@@ -231,6 +225,7 @@ const splitSubtypeRules = {
       ["2", "fúró-csavarozó"],
     ],
     second: [
+      ["0", "nincs megadva"],
       ["1", "önmagában"],
       ["2", "szett / készlet"],
     ],
@@ -569,6 +564,7 @@ form.addEventListener("submit", async (event) => {
         return {
           codePrefix: prefix,
           record: {
+            recordId: crypto.randomUUID(),
             counter,
             leltariSzam: inventoryCode,
             alTipus: data.alTipus,
@@ -622,12 +618,18 @@ const applyInventoryFilters = document.querySelector("#apply-inventory-filters")
 const clearInventoryFilters = document.querySelector("#clear-inventory-filters");
 const inventoryBulkActions = document.querySelector("#inventory-bulk-actions");
 const inventorySelectionStatus = document.querySelector("#inventory-selection-status");
+const selectAllInventoryButton = document.querySelector("#select-all-inventory");
 const deleteSelectedInventoryButton = document.querySelector("#delete-selected-inventory");
 const bulkStickerSize = document.querySelector("#bulk-sticker-size");
+const bulkStickerCount = document.querySelector("#bulk-sticker-count");
 const applyBulkStickerSizeButton = document.querySelector("#apply-bulk-sticker-size");
 const clearInventorySelectionButton = document.querySelector("#clear-inventory-selection");
 const stickerExportButton = document.querySelector("#export-sticker-labels");
 const stickerExportStatus = document.querySelector("#sticker-export-status");
+const stickerExportSize = document.querySelector("#sticker-export-size");
+const stickerDoneLogStatus = document.querySelector("#sticker-done-log-status");
+const stickerDoneLogList = document.querySelector("#sticker-done-log-list");
+const stickerDoneLogDetails = document.querySelector("#sticker-done-log-details");
 const inventoryDetail = document.querySelector("#inventory-detail");
 const inventoryDetailContent = document.querySelector("#inventory-detail-content");
 const backToInventory = document.querySelector("#back-to-inventory");
@@ -643,12 +645,14 @@ const editDialog = document.querySelector("#edit-dialog");
 const editForm = document.querySelector("#edit-form");
 const inventoryState = {
   items: [],
+  groups: [],
   selectedCodes: new Set(),
   sort: { key: "code", direction: "ascending" },
   editing: null,
 };
 
 const inventoryCounterRef = doc(db, "leltariSzamlalok", INVENTORY_COUNTER_DOC_ID);
+const stickerDoneLogRef = doc(db, "logs", "sticker done");
 
 function mutateInventoryStorage(transaction, counterSnapshot, options) {
   return mutateInventoryStorageData(transaction, counterSnapshot, {
@@ -657,6 +661,72 @@ function mutateInventoryStorage(transaction, counterSnapshot, options) {
     counterRef: inventoryCounterRef,
     serverTimestamp,
   });
+}
+
+async function requestInventoryApi(path, options = {}) {
+  if (!inventoryApiEndpoint) throw new Error("A leltár API végpontja nincs beállítva.");
+  const user = auth.currentUser;
+  if (!user) throw new Error("A leltár megtekintéséhez be kell jelentkezni.");
+  const token = await user.getIdToken();
+  const response = await fetch(`${inventoryApiEndpoint}${path}`, {
+    ...options,
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${token}`,
+      ...(options.body ? { "Content-Type": "application/json" } : {}),
+      ...options.headers,
+    },
+  });
+  const result = await response.json();
+  if (!response.ok) {
+    throw new Error(result.error || `A leltár API hibát jelzett (${response.status}).`);
+  }
+  return result;
+}
+
+function attachInventoryGroupContext(group, isDetailed = false) {
+  const parts = getInventoryParts(group.codePrefix);
+  const items = group.items.map((item) => {
+    const contextualItem = {
+      ...item,
+      code: item.code || item.leltariSzam,
+      codePrefix: group.codePrefix,
+      name: item.name ?? group.name,
+      price: item.price ?? group.price,
+      currency: item.currency || group.currency,
+      placement: item.placement ?? group.placement,
+      comment: item.comment ?? group.comment,
+      parts,
+    };
+    if (item.shardId) {
+      contextualItem.parentId = item.shardId;
+      contextualItem.parentRef = doc(db, "eszkozok", item.shardId);
+    }
+    return contextualItem;
+  });
+  return { ...group, items, parts, detailsLoaded: isDetailed };
+}
+
+async function loadInventoryGroupDetails(group) {
+  if (group.detailsLoaded) return group;
+  const result = await requestInventoryApi("/details", {
+    method: "POST",
+    body: JSON.stringify({ code: group.items[0]?.code }),
+  });
+  return attachInventoryGroupContext(result.group, true);
+}
+
+async function loadInventoryItemsWithDetails(items) {
+  const codesNeedingDetails = new Set(
+    items.filter((item) => !item.shardId).map((item) => item.code),
+  );
+  if (!codesNeedingDetails.size) return items;
+  const groups = groupInventoryItems(items.filter((item) => codesNeedingDetails.has(item.code)));
+  const detailedGroups = await Promise.all(groups.map(loadInventoryGroupDetails));
+  const detailedItems = new Map(
+    detailedGroups.flatMap((group) => group.items.map((item) => [item.code, item])),
+  );
+  return items.map((item) => detailedItems.get(item.code) || item);
 }
 
 const importFields = [
@@ -755,8 +825,22 @@ onAuthStateChanged(auth, async (user) => {
   setAuthStatus(user, false);
   if (!user) return;
   try {
-    const result = await bootstrapFirstUser();
-    const accessGranted = result.data.hasAccess === true;
+    const userRef = doc(db, "users", user.uid);
+    const existingUserSnapshot = await getDoc(userRef);
+    const profile = {
+      uid: user.uid,
+      email: user.email || "",
+      displayName: user.displayName || "",
+      photoURL: user.photoURL || "",
+      lastSignInAt: serverTimestamp(),
+    };
+    if (existingUserSnapshot.exists()) {
+      await setDoc(userRef, profile, { merge: true });
+    } else {
+      await setDoc(userRef, { ...profile, hasAccess: false });
+    }
+    const userSnapshot = await getDoc(userRef);
+    const accessGranted = userSnapshot.exists() && userSnapshot.data().hasAccess === true;
     setAuthStatus(user, accessGranted);
     if (accessGranted) {
       document.querySelector('[data-page="inventory"]').click();
@@ -1021,6 +1105,7 @@ async function importRowsToFirestore() {
         const additions = items.map((item) => ({
           codePrefix: prefix,
           record: {
+            recordId: crypto.randomUUID(),
             counter: item.counter,
             leltariSzam: item.code,
             alTipus: item.alTipus,
@@ -1121,10 +1206,35 @@ function populateFilter(select, values, catalogKey) {
   select.value = values.has(currentValue) ? currentValue : "";
 }
 
-function getStickerExportItems() {
+function getStickerExportCandidates() {
   return inventoryState.items
-    .filter((item) => item.stickerSize !== "none")
+    .slice()
     .sort((left, right) => left.code.localeCompare(right.code, "hu"));
+}
+
+async function loadInventoryGroupsFromEmulator() {
+  const snapshot = await getDocs(collection(db, "eszkozok"));
+  const items = [];
+  snapshot.forEach((shardSnapshot) => {
+    const shard = shardSnapshot.data();
+    if (shard.schemaVersion !== INVENTORY_SCHEMA_VERSION) return;
+    Object.entries(shard.groups || {}).forEach(([codePrefix, entries]) => {
+      entries.forEach((record) => {
+        const code = record.leltariSzam;
+        items.push({
+          ...record,
+          code,
+          codePrefix,
+          counter: record.counter || code.slice(code.lastIndexOf("-") + 1),
+          parentId: shardSnapshot.id,
+          parentRef: shardSnapshot.ref,
+          shardId: shardSnapshot.id,
+          parts: getInventoryParts(codePrefix),
+        });
+      });
+    });
+  });
+  return groupInventoryItems(items).map((group) => ({ ...group, detailsLoaded: true }));
 }
 
 async function loadInventory() {
@@ -1164,28 +1274,15 @@ async function loadInventory() {
       || counterSnapshot.data().migrationComplete !== true) {
       throw new Error("A leltár adattára még nincs átállítva. Futtasd előbb az adatköltöztetést.");
     }
-    const snapshot = await getDocs(query(
-      collection(db, "eszkozok"),
-      where("schemaVersion", "==", INVENTORY_SCHEMA_VERSION),
-    ));
-    inventoryState.items = [];
-    snapshot.forEach((shardSnapshot) => {
-      Object.entries(shardSnapshot.data().groups || {}).forEach(([codePrefix, entries]) => {
-        entries.forEach((item) => {
-          const code = item.leltariSzam;
-          inventoryState.items.push({
-            ...item,
-            counter: item.counter || code.slice(code.lastIndexOf("-") + 1),
-            code,
-            codePrefix,
-            parentId: shardSnapshot.id,
-            parentRef: shardSnapshot.ref,
-            shardId: shardSnapshot.id,
-            parts: getInventoryParts(codePrefix),
-          });
-        });
-      });
-    });
+    if (isEmulator) {
+      inventoryState.groups = await loadInventoryGroupsFromEmulator();
+    } else {
+      const inventoryResult = await requestInventoryApi("/list");
+      inventoryState.groups = inventoryResult.groups.map((group) => (
+        attachInventoryGroupContext(group)
+      ));
+    }
+    inventoryState.items = inventoryState.groups.flatMap((group) => group.items);
 
     const inventoryCodes = new Set(inventoryState.items.map((item) => item.code));
     inventoryState.selectedCodes = new Set(
@@ -1196,11 +1293,10 @@ async function loadInventory() {
     populateFilter(inventoryModelFilter, new Set(inventoryState.items.map((item) => item.parts.model)), "model");
     populateFilter(inventoryManufacturerFilter, new Set(inventoryState.items.map((item) => item.parts.manufacturer)), "manufacturer");
     inventoryStatus.textContent = "";
-    const exportableItems = getStickerExportItems();
-    stickerExportButton.disabled = exportableItems.length === 0;
-    stickerExportStatus.textContent = exportableItems.length
-      ? `${exportableItems.length} egyedi leltári tétel exportálható.`
-      : "Nincs exportálható leltári tétel (a „Nincs” matricaméretű tételek kimaradnak).";
+    stickerExportButton.disabled = inventoryState.items.length === 0;
+    stickerExportStatus.textContent = inventoryState.items.length
+      ? "Válassz matricaméretet. A „sticker done” címkéjű tételek kimaradnak."
+      : "Nincs exportálható leltári tétel.";
     stickerExportStatus.className = "form-status";
     renderInventory();
   } catch (error) {
@@ -1212,28 +1308,195 @@ async function loadInventory() {
   }
 }
 
-function exportStickerLabels() {
+async function exportStickerLabels() {
+  let fileExported = false;
   try {
     if (!window.XLSX) throw new Error("Az Excel-készítő nem töltődött be.");
-    const items = getStickerExportItems();
-    if (!items.length) throw new Error("Nincs exportálható leltári tétel.");
+    const listedItems = getStickerExportCandidates();
+    if (!listedItems.length) throw new Error("Nincs exportálható leltári tétel.");
 
-    const rows = [
-      ["Name", "IC", "SN"],
-      ...items.map((item) => [item.name || "", item.code || "", item.serialNumber || ""]),
-    ];
+    const items = await loadInventoryItemsWithDetails(listedItems);
+    const exportItems = selectStickerExportItems(items, stickerExportSize.value);
+    if (!exportItems.length) {
+      throw new Error("Nincs még exportálható tétel a kiválasztott matricamérethez.");
+    }
+    const rows = createStickerExportRows(exportItems, stickerExportSize.value);
+    if (rows.length === 1) throw new Error("Nincs exportálható matrica.");
     const worksheet = window.XLSX.utils.aoa_to_sheet(rows);
     const workbook = window.XLSX.utils.book_new();
     window.XLSX.utils.book_append_sheet(workbook, worksheet, "Labels");
-    window.XLSX.writeFile(workbook, "EAM-HERMA-4461.xlsx");
-    stickerExportStatus.textContent = `${items.length} leltári tétel exportálva.`;
+    await window.XLSX.writeFile(workbook, "EAM-HERMA-4461.xlsx");
+    fileExported = true;
+    const operation = await saveStickerDoneOperation("tag", exportItems.map((item) => ({
+      ...item,
+      recordId: item.recordId || crypto.randomUUID(),
+    })));
+    const taggedCount = operation?.items.length || 0;
+    stickerExportStatus.textContent = `${rows.length - 1} matrica exportálva ${exportItems.length} tételhez; ${taggedCount} tétel „sticker done” címkét kapott.`;
     stickerExportStatus.className = "form-status form-status--success";
+    if (taggedCount) await loadStickerDoneLogs(operation.id);
   } catch (error) {
     console.error("Matricainátor exportálási hiba:", error);
-    stickerExportStatus.textContent = error instanceof Error
+    const message = error instanceof Error
       ? error.message
       : "Az Excel-exportálás nem sikerült.";
+    stickerExportStatus.textContent = fileExported
+      ? `Az Excel-fájl elkészült, de a „sticker done” címkézés vagy naplózás nem sikerült: ${message}`
+      : message;
     stickerExportStatus.className = "form-status form-status--error";
+  }
+}
+
+async function saveStickerDoneOperation(action, items) {
+  const operationId = crypto.randomUUID();
+  const operationCreatedAt = new Date().toISOString();
+  let savedOperation = null;
+  await runTransaction(db, async (transaction) => {
+    const logSnapshot = await transaction.get(stickerDoneLogRef);
+    const updates = items.map((item) => ({
+      shardId: item.shardId,
+      codePrefix: item.codePrefix,
+      code: item.code,
+      recordId: item.recordId || crypto.randomUUID(),
+      ...(action === "restore" ? { expectedTags: item.expectedTags } : {}),
+      getNextTags: (tags) => (action === "tag"
+        ? (tags.includes("sticker done") ? tags : [...tags, "sticker done"])
+        : item.nextTags),
+    }));
+    const changedItems = await updateInventoryRecordTags(transaction, updates, {
+      getShardRef: (shardId) => doc(db, "eszkozok", shardId),
+      serverTimestamp,
+    });
+    if (!changedItems.length) return;
+
+    savedOperation = {
+      id: operationId,
+      action,
+      createdAt: operationCreatedAt,
+      ...(action === "restore" ? { reverses: items[0].reverses } : {}),
+      items: changedItems,
+    };
+    const logData = logSnapshot.exists() ? logSnapshot.data() : {};
+    transaction.set(stickerDoneLogRef, {
+      ...logData,
+      operations: {
+        ...(logData.operations || {}),
+        [operationId]: savedOperation,
+      },
+      updatedAt: serverTimestamp(),
+    });
+  });
+  return savedOperation;
+}
+
+function formatStickerDoneTimestamp(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "Ismeretlen időpont" : date.toLocaleString("hu-HU");
+}
+
+function renderStickerDoneLogDetails(operation) {
+  stickerDoneLogDetails.replaceChildren();
+  if (!operation) return;
+
+  const heading = document.createElement("h2");
+  heading.textContent = operation.action === "tag"
+    ? "Export utáni címkézés"
+    : "Címkék visszaállítása";
+  const timestamp = document.createElement("p");
+  timestamp.className = "import-note";
+  timestamp.textContent = `${formatStickerDoneTimestamp(operation.createdAt)} · ${operation.items.length} tétel`;
+  const list = document.createElement("ul");
+  list.className = "sticker-done-log-items";
+  operation.items.forEach((item) => {
+    const listItem = document.createElement("li");
+    const before = item.beforeTags.length ? item.beforeTags.join(", ") : "nincs címke";
+    const after = item.afterTags.length ? item.afterTags.join(", ") : "nincs címke";
+    listItem.textContent = `${item.code}: ${before} → ${after}`;
+    list.append(listItem);
+  });
+  const restoreButton = document.createElement("button");
+  restoreButton.type = "button";
+  restoreButton.textContent = operation.action === "tag"
+    ? "Címkék eltávolítása"
+    : "Címkék visszaállítása";
+  restoreButton.addEventListener("click", () => restoreStickerDoneOperation(operation, restoreButton));
+  stickerDoneLogDetails.append(heading, timestamp, list, restoreButton);
+}
+
+async function loadStickerDoneLogs(selectedOperationId = "") {
+  stickerDoneLogStatus.textContent = "Naplók betöltése...";
+  stickerDoneLogStatus.className = "form-status";
+  stickerDoneLogList.replaceChildren();
+  try {
+    const snapshot = await getDoc(stickerDoneLogRef);
+    const operations = snapshot.exists() ? snapshot.data().operations || {} : {};
+    const sortedOperations = Object.values(operations)
+      .sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt));
+    if (!sortedOperations.length) {
+      stickerDoneLogStatus.textContent = "Még nincs címkézési napló.";
+      stickerDoneLogDetails.replaceChildren();
+      return;
+    }
+
+    stickerDoneLogStatus.textContent = `${sortedOperations.length} naplóbejegyzés.`;
+    stickerDoneLogStatus.className = "form-status form-status--success";
+    sortedOperations.forEach((operation) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "sticker-done-log-entry";
+      const label = operation.action === "tag" ? "Export utáni címkézés" : "Címkék visszaállítása";
+      button.textContent = `${label} · ${formatStickerDoneTimestamp(operation.createdAt)} · ${operation.items.length} tétel`;
+      button.addEventListener("click", () => renderStickerDoneLogDetails(operation));
+      stickerDoneLogList.append(button);
+    });
+    const selectedOperation = sortedOperations.find((operation) => operation.id === selectedOperationId)
+      || sortedOperations[0];
+    renderStickerDoneLogDetails(selectedOperation);
+  } catch (error) {
+    console.error("Címkézési napló betöltési hiba:", error);
+    stickerDoneLogStatus.textContent = "A címkézési napló betöltése nem sikerült.";
+    stickerDoneLogStatus.className = "form-status form-status--error";
+  }
+}
+
+async function restoreStickerDoneOperation(operation, button) {
+  button.disabled = true;
+  stickerDoneLogStatus.textContent = "Címkék visszaállítása...";
+  stickerDoneLogStatus.className = "form-status";
+  try {
+    await loadInventory();
+    if (inventoryStatus.classList.contains("form-status--error")) {
+      throw new Error("A leltár frissítése nem sikerült. A napló nem állítható vissza.");
+    }
+    const updates = await Promise.all(operation.items.map(async (logItem) => {
+      const listedItem = inventoryState.items.find((item) => (
+        (logItem.recordId && item.recordId === logItem.recordId)
+          || (!logItem.recordId && item.code === logItem.code)
+      ));
+      if (!listedItem) {
+        throw new Error(`A naplóban szereplő tétel már nem található: ${logItem.code}.`);
+      }
+      const [currentItem] = await loadInventoryItemsWithDetails([listedItem]);
+      return {
+        ...currentItem,
+        expectedTags: logItem.afterTags,
+        nextTags: logItem.beforeTags,
+        reverses: operation.id,
+      };
+    }));
+    const restoreOperation = await saveStickerDoneOperation("restore", updates);
+    if (!restoreOperation) {
+      throw new Error("A címkék nem változtak, ezért új visszaállítási napló sem készült.");
+    }
+    await loadStickerDoneLogs(restoreOperation.id);
+  } catch (error) {
+    console.error("Címkézési napló visszaállítási hiba:", error);
+    stickerDoneLogStatus.textContent = error instanceof Error
+      ? error.message
+      : "A címkék visszaállítása nem sikerült.";
+    stickerDoneLogStatus.className = "form-status form-status--error";
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -1382,16 +1645,20 @@ function renderInventory() {
   });
 
   const query = inventorySearch.value.trim().toLocaleLowerCase("hu-HU");
-  const filtered = inventoryState.items.filter((item) => {
-    const searchable = [item.name, item.code, item.serialNumber, item.placement, item.comment]
+  const groups = inventoryState.groups.filter((group) => {
+    const searchable = [
+      group.name,
+      group.placement,
+      group.comment,
+      ...group.items.flatMap((item) => [item.code, item.serialNumber]),
+    ]
       .join(" ").toLocaleLowerCase("hu-HU");
     return (!query || searchable.includes(query))
-      && (!inventoryOwnerFilter.value || item.parts.owner === inventoryOwnerFilter.value)
-      && (!inventoryDeviceTypeFilter.value || item.parts.deviceType === inventoryDeviceTypeFilter.value)
-      && (!inventoryModelFilter.value || item.parts.model === inventoryModelFilter.value)
-      && (!inventoryManufacturerFilter.value || item.parts.manufacturer === inventoryManufacturerFilter.value);
-  });
-  const groups = groupInventoryItems(filtered).sort((left, right) => {
+      && (!inventoryOwnerFilter.value || group.parts.owner === inventoryOwnerFilter.value)
+      && (!inventoryDeviceTypeFilter.value || group.parts.deviceType === inventoryDeviceTypeFilter.value)
+      && (!inventoryModelFilter.value || group.parts.model === inventoryModelFilter.value)
+      && (!inventoryManufacturerFilter.value || group.parts.manufacturer === inventoryManufacturerFilter.value);
+  }).sort((left, right) => {
     const leftValue = left[inventoryState.sort.key] ?? "";
     const rightValue = right[inventoryState.sort.key] ?? "";
     const result = inventoryState.sort.key === "price"
@@ -1473,6 +1740,13 @@ function updateInventorySelectionActions() {
   inventorySelectionStatus.textContent = `${selectedGroups} csoport, ${selectedItems.length} tétel kijelölve.`;
   deleteSelectedInventoryButton.disabled = selectedItems.length === 0;
   applyBulkStickerSizeButton.disabled = selectedItems.length === 0;
+  selectAllInventoryButton.disabled = inventoryState.items.length === 0
+    || selectedItems.length === inventoryState.items.length;
+}
+
+function selectAllInventoryItems() {
+  inventoryState.selectedCodes = new Set(inventoryState.items.map((item) => item.code));
+  renderInventory();
 }
 
 function createIconAction(iconName, label, handler, danger = false) {
@@ -1501,24 +1775,177 @@ function populateInventoryEditCatalog(select, catalogKey) {
   });
 }
 
+function getEditableSubtype(item) {
+  return normalizeCustomSubtype(String(item.alTipus || item.parts?.subtype || "00"));
+}
+
+function populateEditableSubtype(editorForm, model, selectedCode) {
+  const select = editorForm.elements.subtype;
+  const firstSelect = editorForm.elements.subtypeFirst;
+  const secondSelect = editorForm.elements.subtypeSecond;
+  const customInput = editorForm.elements.subtypeCustom;
+  const splitRules = splitSubtypeRules[model];
+  const normalizedCode = normalizeCustomSubtype(selectedCode);
+  editorForm.dataset.subtypeModel = model;
+
+  if (splitRules) {
+    editorForm.querySelector("[data-subtype-editor]").classList.add("subtype-controls--split");
+    select.hidden = true;
+    select.required = false;
+    firstSelect.hidden = false;
+    secondSelect.hidden = false;
+    firstSelect.required = true;
+    secondSelect.required = true;
+    customInput.hidden = true;
+    customInput.required = false;
+    populateSubtypeSelect(firstSelect, "Első számjegy", splitRules.first);
+    populateSubtypeSelect(secondSelect, "Második számjegy", splitRules.second);
+    const matchingPair = findSubtypePair(
+      splitRules,
+      normalizedCode,
+      (firstCode, secondCode) => normalizeSubtype(model, firstCode, secondCode),
+    );
+    if (matchingPair) {
+      firstSelect.value = matchingPair[0];
+      secondSelect.value = matchingPair[1];
+    } else {
+      firstSelect.hidden = true;
+      secondSelect.hidden = true;
+      firstSelect.required = false;
+      secondSelect.required = false;
+      firstSelect.value = "";
+      secondSelect.value = "";
+      customInput.hidden = false;
+      customInput.required = true;
+      customInput.value = normalizedCode;
+    }
+    return;
+  }
+
+  firstSelect.hidden = true;
+  secondSelect.hidden = true;
+  editorForm.querySelector("[data-subtype-editor]").classList.remove("subtype-controls--split");
+  firstSelect.required = false;
+  secondSelect.required = false;
+  customInput.hidden = true;
+  customInput.required = false;
+  select.hidden = false;
+  select.required = true;
+  populateSubtypeSelect(select, "Válassz altípust", [
+    ...(subtypeRules[model] || defaultSubtypes),
+    ["custom", "Egyéni szám"],
+  ]);
+  if ([...select.options].some((option) => option.value === normalizedCode)) {
+    select.value = normalizedCode;
+    customInput.value = "";
+  } else {
+    select.value = "custom";
+    customInput.value = normalizedCode;
+    customInput.hidden = false;
+    customInput.required = true;
+  }
+}
+
+function getEditableSubtypeValue(
+  editorForm,
+  model = editorForm.dataset.subtypeModel
+    || editorForm.elements.model?.value
+    || inventoryState.editing?.parts?.model
+    || "",
+) {
+  if (splitSubtypeRules[model]
+    && !editorForm.elements.subtypeFirst.hidden
+    && editorForm.elements.subtypeFirst.value
+    && editorForm.elements.subtypeSecond.value) {
+    return normalizeSubtype(
+      model,
+      editorForm.elements.subtypeFirst.value,
+      editorForm.elements.subtypeSecond.value,
+    );
+  }
+  if (editorForm.elements.subtype.value === "custom"
+    || !editorForm.elements.subtypeCustom.hidden) {
+    return normalizeCustomSubtype(editorForm.elements.subtypeCustom.value);
+  }
+  return editorForm.elements.subtype.value;
+}
+
+function bindEditableSubtypeControls(editorForm) {
+  const select = editorForm.elements.subtype;
+  const firstSelect = editorForm.elements.subtypeFirst;
+  const secondSelect = editorForm.elements.subtypeSecond;
+  const customInput = editorForm.elements.subtypeCustom;
+  const updateCustomVisibility = () => {
+    const isCustom = select.value === "custom";
+    customInput.hidden = !isCustom;
+    customInput.required = isCustom;
+    if (!isCustom) customInput.value = "";
+  };
+  select.addEventListener("change", updateCustomVisibility);
+  editorForm.elements.model?.addEventListener("change", () => {
+    const currentValue = getEditableSubtypeValue(editorForm, editorForm.dataset.subtypeModel);
+    populateEditableSubtype(editorForm, editorForm.elements.model.value, currentValue);
+  });
+  customInput.addEventListener("blur", () => {
+    if (/^\d$/.test(customInput.value)) customInput.value = customInput.value.padStart(2, "0");
+  });
+  firstSelect.addEventListener("change", () => {
+    if (!customInput.required) return;
+    customInput.hidden = true;
+    customInput.required = false;
+    customInput.value = "";
+  });
+  secondSelect.addEventListener("change", () => {
+    if (!customInput.required) return;
+    customInput.hidden = true;
+    customInput.required = false;
+    customInput.value = "";
+  });
+}
+
+const editableSubtypeForms = [inventoryEditForm, editForm];
+editableSubtypeForms.forEach(bindEditableSubtypeControls);
+
 ["owner", "deviceType", "manufacturer", "model"].forEach((catalogKey) => {
   populateInventoryEditCatalog(inventoryEditForm.elements[catalogKey], catalogKey);
 });
 
-function openInventoryEdit(group) {
-  inventoryState.editing = group;
-  inventoryEditForm.elements.name.value = group.name || "";
-  inventoryEditForm.elements.owner.value = group.parts.owner;
-  inventoryEditForm.elements.deviceType.value = group.parts.deviceType;
-  inventoryEditForm.elements.manufacturer.value = group.parts.manufacturer;
-  inventoryEditForm.elements.model.value = group.parts.model;
-  inventoryEditForm.elements.price.value = group.price ?? "";
-  inventoryEditForm.elements.currency.value = group.currency || "HUF";
-  inventoryEditForm.elements.placement.value = group.placement || "";
-  inventoryEditForm.elements.comment.value = group.comment || "";
-  updateInventoryEditHufValue();
-  inventoryEditModal.hidden = false;
-  inventoryEditForm.elements.name.focus();
+async function openInventoryEdit(group) {
+  try {
+    const fullGroup = await loadInventoryGroupDetails(group);
+    inventoryState.editing = fullGroup;
+    inventoryEditForm.elements.name.value = fullGroup.name || "";
+    inventoryEditForm.elements.owner.value = fullGroup.parts.owner;
+    inventoryEditForm.elements.deviceType.value = fullGroup.parts.deviceType;
+    inventoryEditForm.elements.manufacturer.value = fullGroup.parts.manufacturer;
+    inventoryEditForm.elements.model.value = fullGroup.parts.model;
+    populateEditableSubtype(
+      inventoryEditForm,
+      fullGroup.parts.model,
+      getEditableSubtype(fullGroup.items[0] || fullGroup),
+    );
+    const stickerSizes = new Set(fullGroup.items.map((item) => item.stickerSize || "big"));
+    const stickerSizeSelect = inventoryEditForm.elements.stickerSize;
+    stickerSizeSelect.replaceChildren(
+      ...(stickerSizes.size > 1 ? [new Option("Vegyes (megtartás)", "__mixed__")] : []),
+      ...[["none", "Nincs"], ["small", "Kicsi"], ["medium", "Közepes"], ["big", "Nagy"]]
+        .map(([value, label]) => new Option(label, value)),
+    );
+    stickerSizeSelect.value = stickerSizes.size > 1
+      ? "__mixed__"
+      : [...stickerSizes][0] || "big";
+    inventoryEditForm.elements.price.value = fullGroup.price ?? "";
+    inventoryEditForm.elements.currency.value = fullGroup.currency || "HUF";
+    inventoryEditForm.elements.placement.value = fullGroup.placement || "";
+    inventoryEditForm.elements.comment.value = fullGroup.comment || "";
+    updateInventoryEditHufValue();
+    inventoryEditModal.hidden = false;
+    inventoryEditForm.elements.name.focus();
+  } catch (error) {
+    console.error("Leltári csoport betöltési hiba:", error);
+    inventoryStatus.textContent = "A tétel részletes adatainak betöltése nem sikerült.";
+    inventoryStatus.className = "form-status form-status--error";
+  }
 }
 
 function updateInventoryEditHufValue() {
@@ -1562,10 +1989,11 @@ function requestSelectedInventoryDelete() {
 }
 
 async function deleteInventoryItems(items) {
+  const fullItems = await loadInventoryItemsWithDetails(items);
   await runTransaction(db, async (transaction) => {
     const counterSnapshot = await transaction.get(inventoryCounterRef);
     await mutateInventoryStorage(transaction, counterSnapshot, {
-      removals: items.map((item) => ({
+      removals: fullItems.map((item) => ({
         shardId: item.shardId,
         codePrefix: item.codePrefix,
         counter: item.counter,
@@ -1575,17 +2003,23 @@ async function deleteInventoryItems(items) {
   });
 }
 
-async function updateInventoryStickerSize(items, stickerSize) {
+async function updateInventoryStickerSettings(items, stickerSize, stickerCount) {
+  const fullItems = await loadInventoryItemsWithDetails(items);
+  const itemsToUpdate = fullItems.filter((item) => (
+    (stickerSize != null && (item.stickerSize || "big") !== stickerSize)
+      || (stickerCount != null && Number(item.stickerCount ?? 1) !== stickerCount)
+  ));
+  if (!itemsToUpdate.length) return 0;
   await runTransaction(db, async (transaction) => {
     const counterSnapshot = await transaction.get(inventoryCounterRef);
     await mutateInventoryStorage(transaction, counterSnapshot, {
-      removals: items.map((item) => ({
+      removals: itemsToUpdate.map((item) => ({
         shardId: item.shardId,
         codePrefix: item.codePrefix,
         counter: item.counter,
         code: item.code,
       })),
-      additions: items.map((item) => {
+      additions: itemsToUpdate.map((item) => {
         const {
           code,
           codePrefix,
@@ -1597,11 +2031,16 @@ async function updateInventoryStickerSize(items, stickerSize) {
         } = item;
         return {
           codePrefix,
-          record: { ...record, stickerSize },
+          record: {
+            ...record,
+            ...(stickerSize == null ? {} : { stickerSize }),
+            ...(stickerCount == null ? {} : { stickerCount }),
+          },
         };
       }),
     });
   });
+  return itemsToUpdate.length;
 }
 
 async function confirmInventoryDeletion() {
@@ -1627,20 +2066,43 @@ async function confirmInventoryDeletion() {
 async function applyBulkStickerSize() {
   const items = getSelectedInventoryItems();
   if (!items.length) return;
+  const requestedStickerSize = bulkStickerSize.value || null;
+  const rawStickerCount = bulkStickerCount.value.trim();
+  const requestedStickerCount = rawStickerCount === "" ? null : Number(rawStickerCount);
+  if (requestedStickerSize == null && requestedStickerCount == null) {
+    inventoryStatus.textContent = "Válassz matricaméretet vagy adj meg matricadarabszámot.";
+    inventoryStatus.className = "form-status form-status--error";
+    return;
+  }
+  if (requestedStickerCount != null
+    && (!Number.isInteger(requestedStickerCount) || requestedStickerCount < 0 || requestedStickerCount > 10)) {
+    inventoryStatus.textContent = "A matricák száma 0 és 10 közötti egész szám lehet.";
+    inventoryStatus.className = "form-status form-status--error";
+    return;
+  }
   applyBulkStickerSizeButton.disabled = true;
   deleteSelectedInventoryButton.disabled = true;
-  inventoryStatus.textContent = "Matrica méret módosítása...";
+  inventoryStatus.textContent = "Matrica beállítások módosítása...";
   inventoryStatus.className = "form-status";
   try {
-    await updateInventoryStickerSize(items, bulkStickerSize.value);
+    const changedCount = await updateInventoryStickerSettings(
+      items,
+      requestedStickerSize,
+      requestedStickerCount,
+    );
+    if (!changedCount) {
+      inventoryStatus.textContent = "A kijelölt tételek beállításai már megfelelnek.";
+      inventoryStatus.className = "form-status form-status--success";
+      return;
+    }
     await loadInventory();
     if (!inventoryStatus.classList.contains("form-status--error")) {
-      inventoryStatus.textContent = `${items.length} leltári tétel matricamérete módosítva.`;
+      inventoryStatus.textContent = `${changedCount} leltári tétel matrica-beállításai módosítva.`;
       inventoryStatus.className = "form-status form-status--success";
     }
   } catch (error) {
-    console.error("Tömeges matricaméret-módosítási hiba:", error);
-    inventoryStatus.textContent = "A kijelölt tételek matricaméretének módosítása nem sikerült.";
+    console.error("Tömeges matrica-beállítás módosítási hiba:", error);
+    inventoryStatus.textContent = "A kijelölt tételek matrica-beállításainak módosítása nem sikerült.";
     inventoryStatus.className = "form-status form-status--error";
   } finally {
     updateInventorySelectionActions();
@@ -1650,6 +2112,13 @@ async function applyBulkStickerSize() {
 function openEditDialog(item) {
   inventoryState.editing = item;
   editForm.elements.name.value = item.name || "";
+  populateEditableSubtype(
+    editForm.elements.subtype,
+    editForm.elements.subtypeCustom,
+    item.parts.model,
+    getEditableSubtype(item),
+  );
+  editForm.elements.stickerSize.value = item.stickerSize || "big";
   editForm.elements.price.value = item.price ?? "";
   editForm.elements.serialNumber.value = item.serialNumber || "";
   editForm.elements.placement.value = item.placement || "";
@@ -1668,7 +2137,18 @@ function appendDetailField(container, label, value) {
   container.append(field);
 }
 
-function openInventoryDetail(group) {
+async function openInventoryDetail(group) {
+  try {
+    const fullGroup = await loadInventoryGroupDetails(group);
+    renderInventoryDetail(fullGroup);
+  } catch (error) {
+    console.error("Leltári tétel részletes adatainak betöltési hiba:", error);
+    inventoryStatus.textContent = "A tétel részletes adatainak betöltése nem sikerült.";
+    inventoryStatus.className = "form-status form-status--error";
+  }
+}
+
+function renderInventoryDetail(group) {
   const detailItems = group.items
     .slice()
     .sort((left, right) => Number(left.counter) - Number(right.counter));
@@ -1832,6 +2312,7 @@ scheduleStickyHeaderUpdate();
 
 backToInventory.addEventListener("click", showInventoryPage);
 cancelInventoryEdit.addEventListener("click", closeInventoryEdit);
+selectAllInventoryButton.addEventListener("click", selectAllInventoryItems);
 deleteSelectedInventoryButton.addEventListener("click", requestSelectedInventoryDelete);
 applyBulkStickerSizeButton.addEventListener("click", applyBulkStickerSize);
 clearInventorySelectionButton.addEventListener("click", () => {
@@ -1856,6 +2337,8 @@ inventoryEditForm.addEventListener("submit", async (event) => {
     deviceType: inventoryEditForm.elements.deviceType.value,
     manufacturer: inventoryEditForm.elements.manufacturer.value,
     model: inventoryEditForm.elements.model.value,
+    subtype: getEditableSubtypeValue(inventoryEditForm),
+    stickerSize: inventoryEditForm.elements.stickerSize.value,
     price: inventoryEditForm.elements.price.value === "" ? null : Number(inventoryEditForm.elements.price.value),
     currency: inventoryEditForm.elements.currency.value,
     placement: inventoryEditForm.elements.placement.value.trim(),
@@ -1864,7 +2347,7 @@ inventoryEditForm.addEventListener("submit", async (event) => {
   try {
     await runTransaction(db, async (transaction) => {
       const fallbackCreatedAt = new Date();
-      const newPrefix = `${updates.owner}${updates.deviceType}-${updates.manufacturer}-${updates.model}${group.parts.subtype}`;
+      const newPrefix = `${updates.owner}${updates.deviceType}-${updates.manufacturer}-${updates.model}${updates.subtype}`;
       const newCounterPrefix = `${updates.owner}${updates.deviceType}-${updates.manufacturer}-${updates.model}`;
       const counterSnapshot = await transaction.get(inventoryCounterRef);
       const counterData = counterSnapshot.exists() ? counterSnapshot.data() : {};
@@ -1884,12 +2367,16 @@ inventoryEditForm.addEventListener("submit", async (event) => {
           record: {
             counter: item.counter,
             leltariSzam: `${newPrefix}-${item.counter}`,
-            alTipus: item.alTipus || "",
+            recordId: item.recordId,
+            tags: item.tags,
+            alTipus: updates.subtype,
             name: updates.name,
             price: updates.price,
             currency: updates.currency,
             stickerCount: item.stickerCount,
-            stickerSize: item.stickerSize,
+            stickerSize: updates.stickerSize === "__mixed__"
+              ? item.stickerSize || "big"
+              : updates.stickerSize,
             serialNumber: item.serialNumber || "",
             placement: updates.placement,
             comment: updates.comment,
@@ -1904,8 +2391,8 @@ inventoryEditForm.addEventListener("submit", async (event) => {
     closeInventoryEdit();
     await loadInventory();
     if (!inventoryDetail.hidden) {
-      const updatedGroup = groupInventoryItems(inventoryState.items).find((item) => (
-        item.codePrefix === `${updates.owner}${updates.deviceType}-${updates.manufacturer}-${updates.model}${group.parts.subtype}`
+      const updatedGroup = inventoryState.groups.find((item) => (
+        item.codePrefix === `${updates.owner}${updates.deviceType}-${updates.manufacturer}-${updates.model}${updates.subtype}`
           && item.name === updates.name
       ));
       if (updatedGroup) openInventoryDetail(updatedGroup);
@@ -1926,6 +2413,8 @@ editForm.addEventListener("submit", async (event) => {
   const updatedItem = {
     ...item,
     name: editForm.elements.name.value.trim(),
+    alTipus: getEditableSubtypeValue(editForm),
+    stickerSize: editForm.elements.stickerSize.value,
     price: editForm.elements.price.value === "" ? null : Number(editForm.elements.price.value),
     serialNumber: editForm.elements.serialNumber.value.trim(),
     placement: editForm.elements.placement.value.trim(),
@@ -1935,7 +2424,9 @@ editForm.addEventListener("submit", async (event) => {
     await runTransaction(db, async (transaction) => {
       const fallbackCreatedAt = new Date();
       const counterSnapshot = await transaction.get(inventoryCounterRef);
+      const newPrefix = `${item.parts.owner}${item.parts.deviceType}-${item.parts.manufacturer}-${item.parts.model}${updatedItem.alTipus}`;
       await mutateInventoryStorage(transaction, counterSnapshot, {
+        rejectDuplicateCodes: true,
         removals: [{
           shardId: item.shardId,
           codePrefix: item.codePrefix,
@@ -1943,11 +2434,13 @@ editForm.addEventListener("submit", async (event) => {
           code: item.code,
         }],
         additions: [{
-          codePrefix: item.codePrefix,
+          codePrefix: newPrefix,
           record: {
             counter: item.counter,
-            leltariSzam: item.code,
-            alTipus: item.alTipus || "",
+            leltariSzam: `${newPrefix}-${item.counter}`,
+            recordId: updatedItem.recordId,
+            tags: updatedItem.tags,
+            alTipus: updatedItem.alTipus,
             name: updatedItem.name,
             price: updatedItem.price,
             currency: updatedItem.currency || "HUF",
@@ -2280,6 +2773,10 @@ renderParameterEditor();
 document.querySelector("#cancel-edit").addEventListener("click", () => editDialog.close());
 document.querySelector("#refresh-inventory").addEventListener("click", loadInventory);
 stickerExportButton.addEventListener("click", exportStickerLabels);
+stickerExportSize.addEventListener("change", () => {
+  stickerExportStatus.textContent = `A következő export csak a(z) ${stickerExportSize.selectedOptions[0].textContent.toLowerCase()} méretű címkéket tartalmazza.`;
+  stickerExportStatus.className = "form-status";
+});
 applyInventoryFilters.addEventListener("click", renderInventory);
 clearInventoryFilters.addEventListener("click", () => {
   inventorySearch.value = "";
@@ -2332,15 +2829,22 @@ document.querySelectorAll(".navigation-link").forEach((link) => {
     }
     const page = link.dataset.page;
     event.preventDefault();
+    const pageTargets = {
+      entry: "uj-bevezetes",
+      inventory: "leltar",
+      import: "importalas",
+      labels: "matricainator",
+      "sticker-logs": "cimkezesi-naplo",
+      parameters: "parameterek",
+    };
     document.querySelectorAll(".inventory-page").forEach((section) => {
-      const targetId = page === "inventory" ? "leltar"
-        : page === "import" ? "importalas"
-        : page === "labels" ? "matricainator"
-        : page === "parameters" ? "parameterek" : "uj-bevezetes";
-      section.hidden = section.id !== targetId;
+      section.hidden = section.id !== pageTargets[page];
     });
     setActiveNavigation(page);
     if (page === "inventory" || page === "labels") loadInventory();
+    if (page === "sticker-logs") {
+      Promise.all([loadInventory(), loadStickerDoneLogs()]);
+    }
     if (page === "parameters") renderParameterEditor();
     window.history.replaceState(null, "", link.hash);
   });

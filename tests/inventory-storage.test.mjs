@@ -7,6 +7,8 @@ import {
   estimateInventoryShardBytes,
   getInventoryShardId,
   mutateInventoryStorage,
+  omitUndefinedFields,
+  updateInventoryRecordTags,
 } from "../public/inventory-storage.js";
 
 const counterRef = { collection: "leltariSzamlalok", id: INVENTORY_COUNTER_DOC_ID };
@@ -75,6 +77,28 @@ function inventoryRecord(code, extra = {}) {
   return { leltariSzam: code, name: "Teszt", ...extra };
 }
 
+test("omits undefined optional fields before writing inventory records", async () => {
+  const prefix = "E-RO-UL-SP";
+  const shardId = getInventoryShardId(0);
+  const record = inventoryRecord(`${prefix}-01`, {
+    stickerSize: "small",
+    stickerCount: undefined,
+  });
+  const harness = createHarness();
+
+  await harness.mutate(counterData(), {
+    additions: [{ codePrefix: prefix, record }],
+  });
+
+  assert.deepEqual(harness.documents.get(shardId).groups[prefix], [
+    omitUndefinedFields(record),
+  ]);
+  assert.equal(
+    Object.hasOwn(harness.documents.get(shardId).groups[prefix][0], "stickerCount"),
+    false,
+  );
+});
+
 test("refuses to mutate before migration is complete", async () => {
   const harness = createHarness();
   await assert.rejects(
@@ -82,6 +106,98 @@ test("refuses to mutate before migration is complete", async () => {
     /nincs átállítva/,
   );
   assert.equal(harness.writes.length, 0);
+});
+
+test("updates tags for multiple records in one shard and preserves the rest of each record", async () => {
+  const shardId = getInventoryShardId(0);
+  const codePrefix = "E-RO-UL-SP";
+  const firstCode = `${codePrefix}-01`;
+  const secondCode = `${codePrefix}-02`;
+  const documents = new Map([[shardId, {
+    schemaVersion: INVENTORY_SCHEMA_VERSION,
+    groups: {
+      [codePrefix]: [
+        inventoryRecord(firstCode, { recordId: "one", name: "One", tags: ["existing"] }),
+        inventoryRecord(secondCode, { recordId: "two", name: "Two" }),
+      ],
+    },
+  }]]);
+  const writes = [];
+  let writeStarted = false;
+  const transaction = {
+    async get(ref) {
+      assert.equal(writeStarted, false);
+      const data = documents.get(ref.id);
+      return { exists: () => data !== undefined, data: () => data };
+    },
+    set(ref, data) {
+      writeStarted = true;
+      writes.push({ ref, data });
+    },
+  };
+
+  const changed = await updateInventoryRecordTags(transaction, [
+    {
+      shardId,
+      codePrefix,
+      code: firstCode,
+      getNextTags: (tags) => [...tags, "sticker done"],
+    },
+    {
+      shardId,
+      codePrefix,
+      code: secondCode,
+      recordId: "two",
+      getNextTags: (tags) => [...tags, "sticker done"],
+    },
+  ], {
+    getShardRef: (id) => ({ id }),
+    serverTimestamp: () => timestamp,
+  });
+
+  assert.equal(writes.length, 1);
+  assert.deepEqual(changed.map((item) => item.beforeTags), [["existing"], []]);
+  assert.deepEqual(changed.map((item) => item.afterTags), [
+    ["existing", "sticker done"],
+    ["sticker done"],
+  ]);
+  assert.equal(writes[0].data.groups[codePrefix][0].name, "One");
+  assert.equal(writes[0].data.groups[codePrefix][1].recordId, "two");
+});
+
+test("rejects restoring tags when the current tag state differs from the log", async () => {
+  const shardId = getInventoryShardId(0);
+  const codePrefix = "E-RO-UL-SP";
+  const code = `${codePrefix}-01`;
+  const documents = new Map([[shardId, {
+    schemaVersion: INVENTORY_SCHEMA_VERSION,
+    groups: { [codePrefix]: [inventoryRecord(code, { tags: ["sticker done"] })] },
+  }]]);
+  let writes = 0;
+  const transaction = {
+    async get(ref) {
+      const data = documents.get(ref.id);
+      return { exists: () => data !== undefined, data: () => data };
+    },
+    set() {
+      writes += 1;
+    },
+  };
+
+  await assert.rejects(
+    updateInventoryRecordTags(transaction, [{
+      shardId,
+      codePrefix,
+      code,
+      expectedTags: ["other"],
+      getNextTags: () => [],
+    }], {
+      getShardRef: (id) => ({ id }),
+      serverTimestamp: () => timestamp,
+    }),
+    /címkéi időközben megváltoztak/,
+  );
+  assert.equal(writes, 0);
 });
 
 test("adds records and updates the counter atomically", async () => {

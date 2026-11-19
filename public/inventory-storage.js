@@ -13,6 +13,88 @@ export function estimateInventoryShardBytes(groups) {
   return inventoryTextEncoder.encode(JSON.stringify({ schemaVersion: INVENTORY_SCHEMA_VERSION, groups })).length;
 }
 
+export function omitUndefinedFields(record) {
+  return Object.fromEntries(
+    Object.entries(record).filter(([, value]) => value !== undefined),
+  );
+}
+
+export async function updateInventoryRecordTags(transaction, updates, {
+  getShardRef,
+  serverTimestamp,
+}) {
+  const shards = new Map();
+  const dirtyShardIds = new Set();
+  for (const shardId of new Set(updates.map((item) => item.shardId))) {
+    const ref = getShardRef(shardId);
+    const snapshot = await transaction.get(ref);
+    if (!snapshot.exists()) throw new Error(`A leltári adattár nem található: ${shardId}.`);
+    const data = snapshot.data();
+    if (data.schemaVersion !== INVENTORY_SCHEMA_VERSION) {
+      throw new Error(`A leltári adattár verziója érvénytelen: ${shardId}.`);
+    }
+    shards.set(shardId, {
+      ref,
+      data,
+      groups: cloneInventoryGroups(data.groups || {}),
+    });
+  }
+
+  const seenCodes = new Set();
+  const changedItems = [];
+  updates.forEach((update) => {
+    const key = `${update.shardId}\u0000${update.codePrefix}\u0000${update.code}`;
+    if (seenCodes.has(key)) throw new Error(`A leltári tétel ismétlődik: ${update.code}.`);
+    seenCodes.add(key);
+
+    const shard = shards.get(update.shardId);
+    const records = shard?.groups[update.codePrefix];
+    const record = records?.find((item) => item.leltariSzam === update.code);
+    if (!record) throw new Error(`A leltári tétel nem található: ${update.code}.`);
+
+    const beforeTags = Array.isArray(record.tags) ? [...record.tags] : [];
+    if (update.expectedTags
+      && JSON.stringify(beforeTags) !== JSON.stringify(update.expectedTags)) {
+      throw new Error(`A(z) ${update.code} címkéi időközben megváltoztak. Frissítsd a naplót, majd próbáld újra.`);
+    }
+    const afterTags = update.getNextTags(beforeTags);
+    if (!Array.isArray(afterTags) || afterTags.some((tag) => typeof tag !== "string")) {
+      throw new Error(`Érvénytelen címkeadat: ${update.code}.`);
+    }
+    const tagsChanged = JSON.stringify(beforeTags) !== JSON.stringify(afterTags);
+    const recordId = record.recordId || (tagsChanged ? update.recordId : undefined);
+    const changed = tagsChanged
+      || record.recordId !== recordId;
+    if (!changed) return;
+
+    if (afterTags.length) record.tags = afterTags;
+    else delete record.tags;
+    if (recordId) record.recordId = recordId;
+    dirtyShardIds.add(update.shardId);
+    changedItems.push({
+      recordId,
+      code: update.code,
+      beforeTags,
+      afterTags: [...afterTags],
+    });
+  });
+
+  shards.forEach((shard, shardId) => {
+    if (!dirtyShardIds.has(shardId)) return;
+    const groups = shard.groups;
+    const size = estimateInventoryShardBytes(groups);
+    if (size > MAX_INVENTORY_SHARD_BYTES) {
+      throw new Error("A címkemódosítás túllépné a leltári dokumentum megengedett méretét.");
+    }
+    transaction.set(shard.ref, {
+      ...shard.data,
+      groups,
+      updatedAt: serverTimestamp(),
+    });
+  });
+  return changedItems;
+}
+
 function estimateInventoryAdditionBytes(groups, codePrefix, recordBytes) {
   const entries = groups[codePrefix];
   if (entries) return recordBytes + (entries.length ? 1 : 0);
@@ -43,6 +125,11 @@ export async function mutateInventoryStorage(transaction, counterSnapshot, {
     || existingCounterData.migrationComplete !== true) {
     throw new Error("A leltár adattára még nincs átállítva. Futtasd előbb az adatköltöztetést.");
   }
+
+  additions = additions.map((item) => ({
+    ...item,
+    record: omitUndefinedFields(item.record),
+  }));
 
   const nextByPrefix = { ...(existingCounterData.nextByPrefix || {}) };
   const shardIdsByPrefix = Object.fromEntries(

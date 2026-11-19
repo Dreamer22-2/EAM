@@ -31,6 +31,10 @@
             <img class="navigation-icon navigation-icon--image" src="/assets/icons/sticker-svgrepo-com(2).svg" alt="" aria-hidden="true" />
             <span>Matricainátor</span>
           </a>
+          <a class="navigation-link" href="#cimkezesi-naplo" data-page="sticker-logs">
+            <img class="navigation-icon navigation-icon--image" src="/assets/icons/sticker-svgrepo-com(2).svg" alt="" aria-hidden="true" />
+            <span>Címkézési napló</span>
+          </a>
           <a class="navigation-link" href="#parameterek" data-page="parameters">
             <img class="navigation-icon navigation-icon--image" src="/assets/icons/settings-svgrepo-com.svg" alt="" aria-hidden="true" />
             <span>Paraméterek</span>
@@ -242,20 +246,27 @@
           <p id="inventory-status" class="form-status" role="status" aria-live="polite"></p>
           <div id="inventory-bulk-actions" class="inventory-bulk-actions" hidden>
             <p id="inventory-selection-status" role="status" aria-live="polite"></p>
+            <button type="button" id="select-all-inventory" class="secondary-button">
+              Összes tétel kijelölése
+            </button>
             <button type="button" id="delete-selected-inventory" class="danger-button">
               <img class="button-icon" src="/assets/icons/delete-alt-svgrepo-com.svg" alt="" aria-hidden="true" />
               Kijelöltek törlése
             </button>
             <label for="bulk-sticker-size">Matrica méret
               <select id="bulk-sticker-size">
+                <option value="">Nincs módosítás</option>
                 <option value="none">Nincs</option>
                 <option value="small">Kicsi</option>
                 <option value="medium">Közepes</option>
                 <option value="big">Nagy</option>
               </select>
             </label>
+            <label for="bulk-sticker-count">Matricák száma (üresen hagyva változatlan)
+              <input id="bulk-sticker-count" type="number" min="0" max="10" step="1" inputmode="numeric" />
+            </label>
             <button type="button" id="apply-bulk-sticker-size" class="secondary-button">
-              Matrica méret módosítása
+              Matrica beállítások módosítása
             </button>
             <button type="button" id="clear-inventory-selection" class="secondary-button">
               Kijelölés törlése
@@ -348,9 +359,21 @@
                 target="_blank" rel="noopener noreferrer">HERMA Label Assistant Online</a>
             </p>
             <p class="import-note">
-              Minden leltári tétel külön sorba kerül a nevével, leltári számával (IC)
-              és sorozatszámával (SN). A fájl egy fejlécsort tartalmaz.
+              Minden matrica külön sorba kerül a nevével, leltári számával (IC)
+              és sorozatszámával (SN). Tételenként annyi sor készül, amennyi
+              matrica be van állítva. Csak a kiválasztott méretű címkék
+              exportálódnak; a fájl egy fejlécsort tartalmaz. Sikeres export
+              után az exportált tételek megkapják a „sticker done” címkét, és
+              a következő exportból kimaradnak.
             </p>
+            <div class="form-row">
+              <label for="sticker-export-size">Exportálandó matrica mérete:</label>
+              <select id="sticker-export-size">
+                <option value="small">Kicsi</option>
+                <option value="medium">Közepes</option>
+                <option value="big" selected>Nagy</option>
+              </select>
+            </div>
             <div class="form-actions">
               <button type="button" id="export-sticker-labels">
                 <img class="button-icon" src="/assets/icons/diskette-svgrepo-com.svg" alt="" aria-hidden="true" />
@@ -358,6 +381,15 @@
               </button>
               <p id="sticker-export-status" class="form-status" role="status" aria-live="polite"></p>
             </div>
+          </div>
+        </section>
+
+        <section class="inventory-page" id="cimkezesi-naplo" hidden>
+          <h1>CÍMKÉZÉSI NAPLÓ</h1>
+          <p id="sticker-done-log-status" class="form-status" role="status" aria-live="polite"></p>
+          <div class="sticker-done-log-layout">
+            <div id="sticker-done-log-list" class="sticker-done-log-list"></div>
+            <div id="sticker-done-log-details" class="import-card sticker-done-log-details"></div>
           </div>
         </section>
 
@@ -436,6 +468,21 @@
           <label>Eszköztípus<select name="deviceType" required></select></label>
           <label>Gyártó/márka<select name="manufacturer" required></select></label>
           <label>Típus<select name="model" required></select></label>
+          <label>Altípus:</label>
+          <div class="subtype-controls" data-subtype-editor>
+            <select name="subtype" aria-label="Altípus"></select>
+            <select name="subtypeFirst" aria-label="Altípus első számjegye" hidden></select>
+            <select name="subtypeSecond" aria-label="Altípus második számjegye" hidden></select>
+            <input name="subtypeCustom" type="text" inputmode="numeric" pattern="[0-9]{1,2}" maxlength="2" aria-label="Egyéni altípus" hidden />
+          </div>
+          <label>Matrica méret
+            <select name="stickerSize" required>
+              <option value="none">Nincs</option>
+              <option value="small">Kicsi</option>
+              <option value="medium">Közepes</option>
+              <option value="big">Nagy</option>
+            </select>
+          </label>
           <label>Egységérték<input name="price" type="number" min="0" step="0.01" /></label>
           <label>Pénznem<select name="currency"><option value="HUF">HUF</option><option value="EUR">EUR</option><option value="USD">USD</option></select></label>
           <p id="inventory-edit-huf-value" class="currency-conversion" hidden></p>
@@ -464,6 +511,21 @@
       <form method="dialog" id="edit-form">
         <h2>Eszköz szerkesztése</h2>
         <label>Név<input name="name" required /></label>
+        <label>Altípus:</label>
+        <div class="subtype-controls" data-subtype-editor>
+          <select name="subtype" aria-label="Altípus"></select>
+          <select name="subtypeFirst" aria-label="Altípus első számjegye" hidden></select>
+          <select name="subtypeSecond" aria-label="Altípus második számjegye" hidden></select>
+          <input name="subtypeCustom" type="text" inputmode="numeric" pattern="[0-9]{1,2}" maxlength="2" aria-label="Egyéni altípus" hidden />
+        </div>
+        <label>Matrica méret
+          <select name="stickerSize" required>
+            <option value="none">Nincs</option>
+            <option value="small">Kicsi</option>
+            <option value="medium">Közepes</option>
+            <option value="big">Nagy</option>
+          </select>
+        </label>
         <label>Egységérték<input name="price" type="number" min="0" step="0.01" /></label>
         <label>Sorozatszám<input name="serialNumber" /></label>
         <label>Tárolás helye, módja<textarea name="placement" rows="3"></textarea></label>

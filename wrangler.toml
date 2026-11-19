@@ -1,3 +1,6 @@
 name = "eam-mnb-rates"
 main = "workers/mnb-rates.js"
 compatibility_date = "2026-11-08"
+
+[vars]
+FIREBASE_PROJECT_ID = "e5muhely"
