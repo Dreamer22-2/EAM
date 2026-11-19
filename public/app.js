@@ -2155,7 +2155,7 @@ function renderInventoryDetail(group) {
   inventoryDetailContent.replaceChildren();
 
   const surface = document.createElement("div");
-  surface.className = "inventory-detail-surface";
+  surface.className = "inventory-detail-surface surface";
   const heading = document.createElement("h2");
   heading.className = "inventory-detail-heading";
   heading.textContent = group.name || "Névtelen leltári tétel";
@@ -2176,7 +2176,7 @@ function renderInventoryDetail(group) {
   detailActions.append(createIconAction("delete-alt-svgrepo-com.svg", "Csoport törlése", () => requestInventoryDelete(group), true));
 
   const tableWrapper = document.createElement("div");
-  tableWrapper.className = "table-wrapper";
+  tableWrapper.className = "table-wrapper surface";
   const table = document.createElement("table");
   table.className = "inventory-table inventory-detail-items";
   const head = document.createElement("thead");

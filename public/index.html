@@ -56,7 +56,7 @@
         <section class="inventory-page" id="uj-bevezetes" hidden>
           <h1>ESZKÖZ BEVEZETÉSE A LELTÁRBA</h1>
 
-          <form id="inventory-form" novalidate>
+          <form id="inventory-form" class="surface" novalidate>
             <div class="form-row form-row--name">
               <label for="name">Eszköz neve:</label>
               <input id="name" name="name" type="text" required autocomplete="off" />
@@ -213,7 +213,7 @@
             <button type="button" id="refresh-inventory" class="secondary-button"><img class="button-icon" src="/assets/icons/update-svgrepo-com.svg" alt="" aria-hidden="true" />Frissítés</button>
           </div>
 
-          <div class="inventory-toolbar">
+          <div class="inventory-toolbar surface">
             <label class="inventory-search-filter">
               Keresés
               <span class="inventory-search-input">
@@ -244,7 +244,7 @@
           </div>
 
           <p id="inventory-status" class="form-status" role="status" aria-live="polite"></p>
-          <div id="inventory-bulk-actions" class="inventory-bulk-actions" hidden>
+          <div id="inventory-bulk-actions" class="inventory-bulk-actions surface" hidden>
             <p id="inventory-selection-status" role="status" aria-live="polite"></p>
             <button type="button" id="select-all-inventory" class="secondary-button">
               Összes tétel kijelölése
@@ -272,7 +272,7 @@
               Kijelölés törlése
             </button>
           </div>
-          <div class="table-wrapper">
+          <div class="table-wrapper surface">
             <table class="inventory-table inventory-list-table">
               <thead>
                 <tr>
@@ -303,7 +303,7 @@
         <section class="inventory-page import-page" id="importalas" hidden>
           <h1>IMPORTÁLÁS</h1>
 
-          <div class="import-card">
+          <div class="import-card surface">
             <h2>Excel-fájl beolvasása</h2>
             <p class="import-note">A fájl feldolgozása a böngészőben történik, nem töltjük fel szerverre.</p>
             <label class="file-input-label" for="import-file">Excel-fájl</label>
@@ -311,7 +311,7 @@
             <p id="import-file-status" class="form-status" role="status" aria-live="polite"></p>
           </div>
 
-          <div id="import-options" class="import-card" hidden>
+          <div id="import-options" class="import-card surface" hidden>
             <div class="import-grid">
               <label for="import-sheet">Munkalap
                 <select id="import-sheet"></select>
@@ -332,13 +332,13 @@
             </div>
           </div>
 
-          <div id="import-preview-card" class="import-card" hidden>
+          <div id="import-preview-card" class="import-card surface" hidden>
             <div class="page-heading">
               <h2>Importálási előnézet</h2>
               <button type="button" id="import-confirm-button"><img class="button-icon" src="/assets/icons/upload-svgrepo-com.svg" alt="" aria-hidden="true" />Importálás Firestore-ba</button>
             </div>
             <p id="import-preview-status" class="form-status" role="status" aria-live="polite"></p>
-            <div class="table-wrapper">
+            <div class="table-wrapper surface">
               <table class="inventory-table import-preview-table">
                 <thead id="import-preview-head"></thead>
                 <tbody id="import-preview-body"></tbody>
@@ -350,7 +350,7 @@
         <section class="inventory-page" id="matricainator" hidden>
           <h1>MATRICAINÁTOR</h1>
 
-          <div class="import-card">
+          <div class="import-card surface">
             <h2>HERMA címkeadatok exportálása</h2>
             <p class="import-note">
               A HERMA Label Assistant Online alkalmazásához készít Excel-fájlt.
@@ -389,32 +389,32 @@
           <p id="sticker-done-log-status" class="form-status" role="status" aria-live="polite"></p>
           <div class="sticker-done-log-layout">
             <div id="sticker-done-log-list" class="sticker-done-log-list"></div>
-            <div id="sticker-done-log-details" class="import-card sticker-done-log-details"></div>
+            <div id="sticker-done-log-details" class="import-card surface sticker-done-log-details"></div>
           </div>
         </section>
 
         <section class="inventory-page parameters-page" id="parameterek" hidden>
           <h1>PARAMÉTERKEZELŐ</h1>
 
-          <div class="parameter-section">
+          <div class="parameter-section surface">
             <h2>Legördülő listák</h2>
             <div class="parameter-catalog-grid">
-              <div class="parameter-card">
+              <div class="parameter-card surface--raised">
                 <h3>Tulajdonos</h3>
                 <div id="parameter-owner" class="parameter-entry-list"></div>
                 <button type="button" class="secondary-button parameter-add" data-catalog="owner"><img class="button-icon" src="/assets/icons/add-plus-circle-svgrepo-com.svg" alt="" aria-hidden="true" />Új tulajdonos</button>
               </div>
-              <div class="parameter-card">
+              <div class="parameter-card surface--raised">
                 <h3>Eszköztípus</h3>
                 <div id="parameter-deviceType" class="parameter-entry-list"></div>
                 <button type="button" class="secondary-button parameter-add" data-catalog="deviceType"><img class="button-icon" src="/assets/icons/add-plus-circle-svgrepo-com.svg" alt="" aria-hidden="true" />Új eszköztípus</button>
               </div>
-              <div class="parameter-card">
+              <div class="parameter-card surface--raised">
                 <h3>Gyártó / márka</h3>
                 <div id="parameter-manufacturer" class="parameter-entry-list"></div>
                 <button type="button" class="secondary-button parameter-add" data-catalog="manufacturer"><img class="button-icon" src="/assets/icons/add-plus-circle-svgrepo-com.svg" alt="" aria-hidden="true" />Új gyártó</button>
               </div>
-              <div class="parameter-card">
+              <div class="parameter-card surface--raised">
                 <h3>Típus</h3>
                 <div id="parameter-model" class="parameter-entry-list"></div>
                 <button type="button" class="secondary-button parameter-add" data-catalog="model"><img class="button-icon" src="/assets/icons/add-plus-circle-svgrepo-com.svg" alt="" aria-hidden="true" />Új típus</button>
@@ -422,7 +422,7 @@
             </div>
           </div>
 
-          <div class="parameter-section">
+          <div class="parameter-section surface">
             <h2>Altípus-szabályok</h2>
             <div class="parameter-rule-toolbar">
               <label for="parameter-model-select">Típus:
@@ -436,14 +436,14 @@
                 </select>
               </label>
             </div>
-            <div id="parameter-simple-rule" class="parameter-rule-panel"></div>
+            <div id="parameter-simple-rule" class="parameter-rule-panel surface--raised"></div>
             <div id="parameter-split-rule" class="parameter-rule-panel" hidden>
-              <div>
+              <div class="surface surface--raised">
                 <h3>Első számjegy</h3>
                 <div id="parameter-split-first" class="parameter-entry-list"></div>
                 <button type="button" class="secondary-button parameter-add-digit" data-digit="first"><img class="button-icon" src="/assets/icons/add-plus-circle-svgrepo-com.svg" alt="" aria-hidden="true" />Bejegyzés</button>
               </div>
-              <div>
+              <div class="surface surface--raised">
                 <h3>Második számjegy</h3>
                 <div id="parameter-split-second" class="parameter-entry-list"></div>
                 <button type="button" class="secondary-button parameter-add-digit" data-digit="second"><img class="button-icon" src="/assets/icons/add-plus-circle-svgrepo-com.svg" alt="" aria-hidden="true" />Bejegyzés</button>
@@ -451,7 +451,7 @@
             </div>
           </div>
 
-          <div class="form-actions parameter-actions">
+          <div class="form-actions parameter-actions surface">
             <button type="button" id="save-parameters"><img class="button-icon" src="/assets/icons/diskette-svgrepo-com.svg" alt="" aria-hidden="true" />Paraméterek mentése</button>
             <p id="parameter-status" class="form-status" role="status" aria-live="polite"></p>
           </div>
