@@ -14,6 +14,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_E5MUHELY }}
+          project_id: e5muhely
+
+      - name: Install Cloud Functions dependencies
+        run: npm ci --prefix functions
+
+      - name: Deploy Cloud Functions
+        run: npx -y firebase-tools@latest deploy --only functions --project e5muhely
+        env:
+          FIREBASE_CLI_USE_GOOGLE_APPLICATION_CREDENTIALS: "true"
+
       - uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_E5MUHELY }}

@@ -8,6 +8,11 @@ import {
   signOut,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import {
+  connectFunctionsEmulator,
+  getFunctions,
+  httpsCallable,
+} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js";
+import {
   collection,
   connectFirestoreEmulator,
   doc,
@@ -40,6 +45,8 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
+const functions = getFunctions(app, "europe-central2");
+const bootstrapFirstUser = httpsCallable(functions, "bootstrapFirstUser");
 const isCodespacesHost = window.location.hostname.endsWith(".app.github.dev");
 const isEmulator = window.location.port === "5000"
   || window.location.hostname === "localhost"
@@ -50,8 +57,12 @@ if (isEmulator) {
   const emulatorHost = isCodespacesHost
     ? window.location.hostname.replace(/-5000(?=\.app\.github\.dev$)/, "-8080")
     : window.location.hostname;
+  const functionsEmulatorHost = isCodespacesHost
+    ? window.location.hostname.replace(/-5000(?=\.app\.github\.dev$)/, "-5001")
+    : window.location.hostname;
   connectFirestoreEmulator(db, emulatorHost, 8080);
   connectAuthEmulator(auth, `http://${emulatorHost}:9099`, { disableWarnings: true });
+  connectFunctionsEmulator(functions, functionsEmulatorHost, 5001);
   console.info(`Firestore emulator: ${emulatorHost}:8080`);
 }
 
@@ -744,22 +755,8 @@ onAuthStateChanged(auth, async (user) => {
   setAuthStatus(user, false);
   if (!user) return;
   try {
-    const userRef = doc(db, "users", user.uid);
-    const existingUserSnapshot = await getDoc(userRef);
-    const profile = {
-      uid: user.uid,
-      email: user.email || "",
-      displayName: user.displayName || "",
-      photoURL: user.photoURL || "",
-      lastSignInAt: serverTimestamp(),
-    };
-    if (existingUserSnapshot.exists()) {
-      await setDoc(userRef, profile, { merge: true });
-    } else {
-      await setDoc(userRef, { ...profile, hasAccess: false });
-    }
-    const userSnapshot = await getDoc(userRef);
-    const accessGranted = userSnapshot.exists() && userSnapshot.data().hasAccess === true;
+    const result = await bootstrapFirstUser();
+    const accessGranted = result.data.hasAccess === true;
     setAuthStatus(user, accessGranted);
     if (accessGranted) {
       document.querySelector('[data-page="inventory"]').click();

@@ -129,9 +129,27 @@ existing data is safe to ignore.
 The repository includes GitHub Actions workflows for Firebase Hosting:
 
 - Pull requests create a Firebase Hosting preview channel.
-- Pushes to `main` deploy the `public` directory to the live Hosting channel.
+- Pushes to `main` deploy Cloud Functions and the `public` directory to the live
+  Hosting channel.
 
 The live deployment workflow requires a repository secret named
 `FIREBASE_SERVICE_ACCOUNT_E5MUHELY`. Create or verify it in GitHub under
 **Settings → Secrets and variables → Actions**. Its value must be the Firebase
-service-account JSON generated for the `e5muhely` project.
+service-account JSON generated for the `e5muhely` project. The account must
+also have permission to deploy Cloud Functions. Functions deployment requires
+the Firebase project to have billing enabled.
+
+## First-user access
+
+On sign-in, a callable Cloud Function initializes the user profile. The first
+Firebase Auth account is granted access only if no other Auth account or
+Firestore user profile exists, and is recorded in the one-time
+`system/accessBootstrap` marker. Later users are created without access;
+existing access settings are preserved.
+
+The function is deployed with the live Hosting workflow. For local sign-in
+testing, start the Functions, Auth, and Firestore emulators together:
+
+```sh
+npx -y firebase-tools@latest emulators:start --only auth,functions,firestore,hosting --project e5muhely
+```
