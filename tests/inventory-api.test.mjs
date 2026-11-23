@@ -7,6 +7,26 @@ import {
   toDetailGroup,
   toListGroup,
 } from "../workers/mnb-rates.js";
+import worker from "../workers/mnb-rates.js";
+
+test("inventory CORS preflight allows authorization requests from Firebase Hosting", async () => {
+  const response = await worker.fetch(new Request(
+    "https://worker.example/inventory/list",
+    {
+      method: "OPTIONS",
+      headers: {
+        Origin: "https://e5muhely.web.app",
+        "Access-Control-Request-Method": "GET",
+        "Access-Control-Request-Headers": "authorization",
+      },
+    },
+  ), { FIREBASE_PROJECT_ID: "e5muhely" });
+
+  assert.equal(response.status, 204);
+  assert.equal(response.headers.get("Access-Control-Allow-Origin"), "https://e5muhely.web.app");
+  assert.match(response.headers.get("Access-Control-Allow-Headers"), /authorization/i);
+  assert.match(response.headers.get("Access-Control-Allow-Methods"), /GET/i);
+});
 
 test("inventory API rejects unauthenticated requests before reading Firestore", async () => {
   const response = await handleInventoryRequest(
