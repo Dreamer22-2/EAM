@@ -527,7 +527,15 @@
           </select>
         </label>
         <label>Egységérték<input name="price" type="number" min="0" step="0.01" /></label>
-        <label>Sorozatszám<input name="serialNumber" /></label>
+        <fieldset class="serial-number-editor">
+          <legend>Sorozatszámok</legend>
+          <div class="serial-number-editor-heading" aria-hidden="true">
+            <span>Sorozatszám</span>
+            <span>Megnevezés</span>
+            <span>Műveletek</span>
+          </div>
+          <div id="edit-serial-number-list" class="serial-number-editor-list"></div>
+        </fieldset>
         <label>Tárolás helye, módja<textarea name="placement" rows="3"></textarea></label>
         <label>Megjegyzés<textarea name="comment" rows="3"></textarea></label>
         <div class="dialog-actions">

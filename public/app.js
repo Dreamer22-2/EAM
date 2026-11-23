@@ -19,11 +19,13 @@ import {
   serverTimestamp,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import {
+  addChildSerialNumber as addChildSerialNumberData,
   INVENTORY_COUNTER_DOC_ID,
   INVENTORY_SCHEMA_VERSION,
   getInventoryShardId,
   mutateInventoryStorage as mutateInventoryStorageData,
   updateInventoryRecordTags,
+  updateInventorySerialNumber as updateInventorySerialNumberData,
 } from "./inventory-storage.js";
 import { findSubtypePair } from "./subtype-editor.js";
 import {
@@ -643,12 +645,14 @@ const cancelInventoryDelete = document.querySelector("#cancel-inventory-delete")
 const confirmInventoryDelete = document.querySelector("#confirm-inventory-delete");
 const editDialog = document.querySelector("#edit-dialog");
 const editForm = document.querySelector("#edit-form");
+const editSerialNumberList = document.querySelector("#edit-serial-number-list");
 const inventoryState = {
   items: [],
   groups: [],
   selectedCodes: new Set(),
   sort: { key: "code", direction: "ascending" },
   editing: null,
+  detailGroup: null,
 };
 
 const inventoryCounterRef = doc(db, "leltariSzamlalok", INVENTORY_COUNTER_DOC_ID);
@@ -2109,18 +2113,80 @@ async function applyBulkStickerSize() {
   }
 }
 
+function appendChildSerialNumberRow(child = {}) {
+  const row = document.createElement("div");
+  row.className = "serial-number-editor-row serial-number-editor-row--child";
+  const serialInput = document.createElement("input");
+  serialInput.type = "text";
+  serialInput.value = child.serialNumber || "";
+  serialInput.placeholder = "Gyermek sorozatszám";
+  serialInput.setAttribute("aria-label", "Gyermek sorozatszám");
+  const nameInput = document.createElement("input");
+  nameInput.type = "text";
+  nameInput.value = child.name || "";
+  nameInput.placeholder = "Megnevezés";
+  nameInput.setAttribute("aria-label", "Gyermek sorozatszám megnevezése");
+  const tools = document.createElement("div");
+  tools.className = "serial-number-editor-tools";
+  tools.append(createIconAction(
+    "delete-alt-svgrepo-com.svg",
+    "Gyermek sorozatszám eltávolítása",
+    () => row.remove(),
+    true,
+  ));
+  row.append(serialInput, nameInput, tools);
+  editSerialNumberList.append(row);
+  return serialInput;
+}
+
+function renderEditableSerialNumbers(item) {
+  editSerialNumberList.replaceChildren();
+  const parentRow = document.createElement("div");
+  parentRow.className = "serial-number-editor-row serial-number-editor-row--parent";
+  const parentInput = document.createElement("input");
+  parentInput.type = "text";
+  parentInput.name = "serialNumber";
+  parentInput.value = item.serialNumber || "";
+  parentInput.placeholder = "Szülő sorozatszám";
+  parentInput.setAttribute("aria-label", "Szülő sorozatszám");
+  const parentNamePlaceholder = document.createElement("span");
+  parentNamePlaceholder.setAttribute("aria-hidden", "true");
+  const tools = document.createElement("div");
+  tools.className = "serial-number-editor-tools";
+  tools.append(createIconAction(
+    "add-plus-circle-svgrepo-com.svg",
+    "Gyermek sorozatszám hozzáadása",
+    () => appendChildSerialNumberRow().focus(),
+  ));
+  parentRow.append(parentInput, parentNamePlaceholder, tools);
+  editSerialNumberList.append(parentRow);
+  (Array.isArray(item.childSerialNumbers) ? item.childSerialNumbers : [])
+    .forEach((child) => appendChildSerialNumberRow(child));
+}
+
+function getEditableChildSerialNumbers() {
+  return [...editSerialNumberList.querySelectorAll(".serial-number-editor-row--child")]
+    .map((row) => {
+      const [serialInput, nameInput] = row.querySelectorAll("input");
+      return {
+        serialNumber: serialInput.value.trim(),
+        name: nameInput.value.trim(),
+      };
+    })
+    .filter((child) => child.serialNumber);
+}
+
 function openEditDialog(item) {
   inventoryState.editing = item;
   editForm.elements.name.value = item.name || "";
   populateEditableSubtype(
-    editForm.elements.subtype,
-    editForm.elements.subtypeCustom,
+    editForm,
     item.parts.model,
     getEditableSubtype(item),
   );
   editForm.elements.stickerSize.value = item.stickerSize || "big";
   editForm.elements.price.value = item.price ?? "";
-  editForm.elements.serialNumber.value = item.serialNumber || "";
+  renderEditableSerialNumbers(item);
   editForm.elements.placement.value = item.placement || "";
   editForm.elements.comment.value = item.comment || "";
   editDialog.showModal();
@@ -2149,6 +2215,7 @@ async function openInventoryDetail(group) {
 }
 
 function renderInventoryDetail(group) {
+  inventoryState.detailGroup = group;
   const detailItems = group.items
     .slice()
     .sort((left, right) => Number(left.counter) - Number(right.counter));
@@ -2181,11 +2248,7 @@ function renderInventoryDetail(group) {
   table.className = "inventory-table inventory-detail-items";
   const head = document.createElement("thead");
   const headerRow = document.createElement("tr");
-  const hasSerialNumbers = detailItems.some((item) => {
-    const serialNumber = String(item.serialNumber || "").trim();
-    return serialNumber && serialNumber !== "-" && serialNumber !== "—";
-  });
-  ["Leltári szám", ...(hasSerialNumbers ? ["Sorozatszám(ok)"] : [])].forEach((label) => {
+  ["Leltári szám", "Sorozatszám(ok)", "Megnevezés", "Műveletek"].forEach((label) => {
     const cell = document.createElement("th");
     cell.textContent = label;
     headerRow.append(cell);
@@ -2193,17 +2256,59 @@ function renderInventoryDetail(group) {
   head.append(headerRow);
   const body = document.createElement("tbody");
   detailItems.forEach((item) => {
+    const children = Array.isArray(item.childSerialNumbers) ? item.childSerialNumbers : [];
     const row = document.createElement("tr");
-    appendCell(row, item.code);
-    if (hasSerialNumbers) appendCell(row, item.serialNumber || "—");
+    const codeCell = document.createElement("td");
+    codeCell.className = "inventory-code-cell";
+    codeCell.textContent = item.code;
+    codeCell.rowSpan = children.length + 1;
+    const serialCell = document.createElement("td");
+    serialCell.className = "serial-number-cell";
+    serialCell.textContent = item.serialNumber || "—";
+    const nameCell = document.createElement("td");
+    nameCell.className = "serial-number-name-cell";
     const actions = document.createElement("td");
+    actions.className = "inventory-detail-actions-cell";
+    actions.append(createIconAction(
+      "add-plus-circle-svgrepo-com.svg",
+      "Gyermek sorozatszám hozzáadása",
+      () => addChildSerialNumberRow(item, row),
+    ));
+    actions.append(createIconAction(
+      "edit-alt-2-svgrepo-com.svg",
+      "Sorozatszám szerkesztése",
+      () => editInventorySerialNumberRow(item, row, {
+        serialNumber: item.serialNumber || "",
+      }),
+    ));
     actions.append(createIconAction("delete-alt-svgrepo-com.svg", "Tétel törlése", () => requestInventoryDelete(item, true), true));
-    row.append(actions);
+    row.append(codeCell, serialCell, nameCell, actions);
     body.append(row);
+
+    children.forEach((child, childIndex) => {
+        const childRow = document.createElement("tr");
+        childRow.className = "serial-number-child-row";
+        const childSerialCell = document.createElement("td");
+        childSerialCell.className = "serial-number-cell serial-number-child-cell";
+        childSerialCell.textContent = child.serialNumber || "";
+        const childNameCell = document.createElement("td");
+        childNameCell.className = "serial-number-name-cell serial-number-child-name";
+        childNameCell.textContent = child.name || "";
+        const childActions = document.createElement("td");
+        childActions.className = "inventory-detail-actions-cell";
+        childActions.append(createIconAction(
+          "edit-alt-2-svgrepo-com.svg",
+          "Gyermek sorozatszám szerkesztése",
+          () => editInventorySerialNumberRow(item, childRow, {
+            childIndex,
+            serialNumber: child.serialNumber || "",
+            name: child.name || "",
+          }),
+        ));
+        childRow.append(childSerialCell, childNameCell, childActions);
+        body.append(childRow);
+      });
   });
-  const actionsHeader = document.createElement("th");
-  actionsHeader.textContent = "Műveletek";
-  headerRow.append(actionsHeader);
   table.append(head, body);
   tableWrapper.append(table);
   surface.append(heading, fields, detailActions, tableWrapper);
@@ -2215,6 +2320,167 @@ function renderInventoryDetail(group) {
   setActiveNavigation("inventory");
   window.history.replaceState(null, "", "#leltar-reszletek");
   window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function addChildSerialNumberRow(item, parentRow) {
+  let lastChildRow = parentRow;
+  while (lastChildRow.nextElementSibling?.classList.contains("serial-number-child-row")) {
+    if (lastChildRow.nextElementSibling.classList.contains("serial-number-child-row--pending")) {
+      lastChildRow.nextElementSibling.querySelector("input").focus();
+      return;
+    }
+    lastChildRow = lastChildRow.nextElementSibling;
+  }
+
+  const row = document.createElement("tr");
+  row.className = "serial-number-child-row serial-number-child-row--pending";
+  const serialCell = document.createElement("td");
+  serialCell.className = "serial-number-child-cell";
+  const serialInput = document.createElement("input");
+  serialInput.type = "text";
+  serialInput.placeholder = "Gyermek sorozatszám";
+  serialInput.setAttribute("aria-label", "Gyermek sorozatszám");
+  serialInput.required = true;
+  const errorStatus = document.createElement("p");
+  errorStatus.className = "form-status";
+  errorStatus.hidden = true;
+  serialCell.append(serialInput, errorStatus);
+  const nameCell = document.createElement("td");
+  nameCell.className = "serial-number-child-name";
+  const nameInput = document.createElement("input");
+  nameInput.type = "text";
+  nameInput.placeholder = "Megnevezés";
+  nameInput.setAttribute("aria-label", "Gyermek sorozatszám megnevezése");
+  nameCell.append(nameInput);
+  const toolsCell = document.createElement("td");
+  const tools = document.createElement("div");
+  tools.className = "row-actions";
+  const saveButton = document.createElement("button");
+  saveButton.type = "button";
+  saveButton.className = "secondary-button";
+  saveButton.textContent = "Mentés";
+  const cancelButton = document.createElement("button");
+  cancelButton.type = "button";
+  cancelButton.className = "secondary-button";
+  cancelButton.textContent = "Mégse";
+  cancelButton.addEventListener("click", () => {
+    const codeCell = parentRow.querySelector(".inventory-code-cell");
+    codeCell.rowSpan -= 1;
+    row.remove();
+  });
+  saveButton.addEventListener("click", async () => {
+    if (!serialInput.reportValidity()) return;
+    saveButton.disabled = true;
+    cancelButton.disabled = true;
+    try {
+      item.childSerialNumbers = await runTransaction(db, (transaction) => (
+        addChildSerialNumberData(transaction, {
+          shardRef: doc(db, "eszkozok", item.shardId),
+          codePrefix: item.codePrefix,
+          code: item.code,
+          serialNumber: serialInput.value,
+          name: nameInput.value,
+        }, { serverTimestamp })
+      ));
+      renderInventoryDetail(inventoryState.detailGroup);
+    } catch (error) {
+      console.error("Gyermek sorozatszám mentési hiba:", error);
+      errorStatus.textContent = error instanceof Error
+        ? error.message
+        : "A gyermek sorozatszám mentése nem sikerült.";
+      errorStatus.className = "form-status form-status--error";
+      errorStatus.hidden = false;
+      saveButton.disabled = false;
+      cancelButton.disabled = false;
+    }
+  });
+  tools.append(saveButton, cancelButton);
+  toolsCell.append(tools);
+  row.append(serialCell, nameCell, toolsCell);
+  const codeCell = parentRow.querySelector(".inventory-code-cell");
+  codeCell.rowSpan += 1;
+  lastChildRow.after(row);
+  serialInput.focus();
+}
+
+function editInventorySerialNumberRow(item, row, {
+  childIndex,
+  serialNumber,
+  name = "",
+}) {
+  const serialCell = row.querySelector(".serial-number-cell");
+  const nameCell = row.querySelector(".serial-number-name-cell");
+  const actionsCell = row.querySelector(".inventory-detail-actions-cell");
+  const serialInput = document.createElement("input");
+  serialInput.type = "text";
+  serialInput.value = serialNumber;
+  serialInput.placeholder = childIndex === undefined
+    ? "Sorozatszám"
+    : "Gyermek sorozatszám";
+  serialInput.setAttribute("aria-label", childIndex === undefined
+    ? "Sorozatszám"
+    : "Gyermek sorozatszám");
+  serialInput.required = childIndex !== undefined;
+  serialCell.replaceChildren(serialInput);
+
+  let nameInput;
+  if (childIndex !== undefined) {
+    nameInput = document.createElement("input");
+    nameInput.type = "text";
+    nameInput.value = name;
+    nameInput.placeholder = "Megnevezés";
+    nameInput.setAttribute("aria-label", "Gyermek sorozatszám megnevezése");
+    nameCell.replaceChildren(nameInput);
+  }
+
+  const errorStatus = document.createElement("p");
+  errorStatus.className = "form-status";
+  errorStatus.hidden = true;
+  serialCell.append(errorStatus);
+  actionsCell.replaceChildren();
+  const actions = document.createElement("div");
+  actions.className = "row-actions";
+  const saveButton = document.createElement("button");
+  saveButton.type = "button";
+  saveButton.className = "secondary-button";
+  saveButton.textContent = "Mentés";
+  const cancelButton = document.createElement("button");
+  cancelButton.type = "button";
+  cancelButton.className = "secondary-button";
+  cancelButton.textContent = "Mégse";
+  cancelButton.addEventListener("click", () => renderInventoryDetail(inventoryState.detailGroup));
+  saveButton.addEventListener("click", async () => {
+    if (!serialInput.reportValidity()) return;
+    saveButton.disabled = true;
+    cancelButton.disabled = true;
+    try {
+      const updatedRecord = await runTransaction(db, (transaction) => (
+        updateInventorySerialNumberData(transaction, {
+          shardRef: doc(db, "eszkozok", item.shardId),
+          codePrefix: item.codePrefix,
+          code: item.code,
+          childIndex,
+          serialNumber: serialInput.value,
+          name: nameInput?.value,
+        }, { serverTimestamp })
+      ));
+      item.serialNumber = updatedRecord.serialNumber;
+      item.childSerialNumbers = updatedRecord.childSerialNumbers;
+      renderInventoryDetail(inventoryState.detailGroup);
+    } catch (error) {
+      console.error("Sorozatszám-módosítási hiba:", error);
+      errorStatus.textContent = error instanceof Error
+        ? error.message
+        : "A sorozatszám mentése nem sikerült.";
+      errorStatus.className = "form-status form-status--error";
+      errorStatus.hidden = false;
+      saveButton.disabled = false;
+      cancelButton.disabled = false;
+    }
+  });
+  actions.append(saveButton, cancelButton);
+  actionsCell.append(actions);
+  serialInput.focus();
 }
 
 function setActiveNavigation(page) {
@@ -2378,6 +2644,7 @@ inventoryEditForm.addEventListener("submit", async (event) => {
               ? item.stickerSize || "big"
               : updates.stickerSize,
             serialNumber: item.serialNumber || "",
+            childSerialNumbers: item.childSerialNumbers || [],
             placement: updates.placement,
             comment: updates.comment,
             letrehozva: item.letrehozva || fallbackCreatedAt,
@@ -2417,6 +2684,7 @@ editForm.addEventListener("submit", async (event) => {
     stickerSize: editForm.elements.stickerSize.value,
     price: editForm.elements.price.value === "" ? null : Number(editForm.elements.price.value),
     serialNumber: editForm.elements.serialNumber.value.trim(),
+    childSerialNumbers: getEditableChildSerialNumbers(),
     placement: editForm.elements.placement.value.trim(),
     comment: editForm.elements.comment.value.trim(),
   };
@@ -2447,6 +2715,7 @@ editForm.addEventListener("submit", async (event) => {
             stickerCount: updatedItem.stickerCount,
             stickerSize: updatedItem.stickerSize,
             serialNumber: updatedItem.serialNumber,
+            childSerialNumbers: updatedItem.childSerialNumbers,
             placement: updatedItem.placement,
             comment: updatedItem.comment,
             letrehozva: item.letrehozva || fallbackCreatedAt,

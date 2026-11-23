@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  addChildSerialNumber,
   INVENTORY_COUNTER_DOC_ID,
   INVENTORY_SCHEMA_VERSION,
   MAX_INVENTORY_SHARD_BYTES,
@@ -9,6 +10,7 @@ import {
   mutateInventoryStorage,
   omitUndefinedFields,
   updateInventoryRecordTags,
+  updateInventorySerialNumber,
 } from "../public/inventory-storage.js";
 
 const counterRef = { collection: "leltariSzamlalok", id: INVENTORY_COUNTER_DOC_ID };
@@ -76,6 +78,134 @@ function counterData(overrides = {}) {
 function inventoryRecord(code, extra = {}) {
   return { leltariSzam: code, name: "Teszt", ...extra };
 }
+
+test("adds a child serial number transactionally and preserves the inventory record", async () => {
+  const prefix = "E-RO-UL-SP";
+  const code = `${prefix}-01`;
+  const shardId = getInventoryShardId(0);
+  const original = inventoryRecord(code, {
+    serialNumber: "PARENT-SN",
+    childSerialNumbers: [{ serialNumber: "OLD-CHILD", name: "Korábbi" }],
+    stickerCount: 3,
+  });
+  const harness = createHarness({
+    [shardId]: {
+      schemaVersion: INVENTORY_SCHEMA_VERSION,
+      groups: { [prefix]: [original] },
+    },
+  });
+
+  const children = await addChildSerialNumber(harness.transaction, {
+    shardRef: harness.getShardRef(shardId),
+    codePrefix: prefix,
+    code,
+    serialNumber: " NEW-CHILD ",
+    name: "Tartalék",
+  }, { serverTimestamp: () => timestamp });
+  harness.writes.forEach((write) => harness.documents.set(write.ref.id, write.data));
+
+  assert.deepEqual(children, [
+    { serialNumber: "OLD-CHILD", name: "Korábbi" },
+    { serialNumber: "NEW-CHILD", name: "Tartalék" },
+  ]);
+  assert.equal(harness.writes.length, 1);
+  assert.deepEqual(harness.documents.get(shardId).groups[prefix][0], {
+    ...original,
+    childSerialNumbers: children,
+  });
+  assert.equal(harness.documents.get(shardId).updatedAt, timestamp);
+});
+
+test("rejects child serial numbers for missing items without writing", async () => {
+  const prefix = "E-RO-UL-SP";
+  const shardId = getInventoryShardId(0);
+  const harness = createHarness({
+    [shardId]: {
+      schemaVersion: INVENTORY_SCHEMA_VERSION,
+      groups: { [prefix]: [] },
+    },
+  });
+
+  await assert.rejects(
+    addChildSerialNumber(harness.transaction, {
+      shardRef: harness.getShardRef(shardId),
+      codePrefix: prefix,
+      code: `${prefix}-missing`,
+      serialNumber: "CHILD-SN",
+    }, { serverTimestamp: () => timestamp }),
+    /A leltári tétel nem található/,
+  );
+  assert.equal(harness.writes.length, 0);
+});
+
+test("updates a parent serial number transactionally and preserves other fields", async () => {
+  const prefix = "E-RO-UL-SP";
+  const code = `${prefix}-01`;
+  const shardId = getInventoryShardId(0);
+  const original = inventoryRecord(code, {
+    serialNumber: "OLD-PARENT",
+    childSerialNumbers: [{ serialNumber: "CHILD-1", name: "Motor" }],
+    stickerCount: 3,
+  });
+  const harness = createHarness({
+    [shardId]: {
+      schemaVersion: INVENTORY_SCHEMA_VERSION,
+      groups: { [prefix]: [original] },
+    },
+  });
+
+  const updated = await updateInventorySerialNumber(harness.transaction, {
+    shardRef: harness.getShardRef(shardId),
+    codePrefix: prefix,
+    code,
+    serialNumber: " NEW-PARENT ",
+  }, { serverTimestamp: () => timestamp });
+  harness.writes.forEach((write) => harness.documents.set(write.ref.id, write.data));
+
+  assert.equal(updated.serialNumber, "NEW-PARENT");
+  assert.deepEqual(harness.documents.get(shardId).groups[prefix][0], {
+    ...original,
+    serialNumber: "NEW-PARENT",
+  });
+  assert.equal(harness.writes.length, 1);
+  assert.equal(harness.documents.get(shardId).updatedAt, timestamp);
+});
+
+test("updates a child serial and name without changing sibling children", async () => {
+  const prefix = "E-RO-UL-SP";
+  const code = `${prefix}-01`;
+  const shardId = getInventoryShardId(0);
+  const original = inventoryRecord(code, {
+    childSerialNumbers: [
+      { serialNumber: "CHILD-1", name: "Motor" },
+      { serialNumber: "CHILD-2", name: "Adapter" },
+    ],
+  });
+  const harness = createHarness({
+    [shardId]: {
+      schemaVersion: INVENTORY_SCHEMA_VERSION,
+      groups: { [prefix]: [original] },
+    },
+  });
+
+  const updated = await updateInventorySerialNumber(harness.transaction, {
+    shardRef: harness.getShardRef(shardId),
+    codePrefix: prefix,
+    code,
+    childIndex: 1,
+    serialNumber: " CHILD-2-UPDATED ",
+    name: "Power adapter",
+  }, { serverTimestamp: () => timestamp });
+
+  assert.deepEqual(updated.childSerialNumbers, [
+    { serialNumber: "CHILD-1", name: "Motor" },
+    { serialNumber: "CHILD-2-UPDATED", name: "Power adapter" },
+  ]);
+  assert.deepEqual(harness.writes[0].data.groups[prefix][0], {
+    ...original,
+    childSerialNumbers: updated.childSerialNumbers,
+  });
+});
 
 test("omits undefined optional fields before writing inventory records", async () => {
   const prefix = "E-RO-UL-SP";

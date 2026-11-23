@@ -240,6 +240,9 @@ test("detail payload includes only the selected group's editable item fields", (
         stickerSize: "small",
         recordId: "record-1",
         tags: ["sticker done"],
+        childSerialNumbers: [
+          { serialNumber: "CHILD-1", name: "Battery" },
+        ],
         alTipus: "A",
         letrehozva: new Date("2026-01-02T03:04:05.000Z"),
         privateField: "not sent",
@@ -253,6 +256,9 @@ test("detail payload includes only the selected group's editable item fields", (
   assert.equal(detail.items[0].stickerCount, 2);
   assert.equal(detail.items[0].recordId, "record-1");
   assert.deepEqual(detail.items[0].tags, ["sticker done"]);
+  assert.deepEqual(detail.items[0].childSerialNumbers, [
+    { serialNumber: "CHILD-1", name: "Battery" },
+  ]);
   assert.equal(detail.items[0].privateField, undefined);
   assert.equal(detail.items[0].shardId, "__v2_inventory_0000");
 });

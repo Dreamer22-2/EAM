@@ -756,6 +756,55 @@ dialog {
   padding: 9px 10px;
 }
 
+.inventory-detail-items .inventory-code-cell {
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.inventory-detail-items td.inventory-detail-actions-cell {
+  width: 140px;
+  min-width: 140px;
+  white-space: normal;
+}
+
+.inventory-detail-actions-cell .row-actions {
+  min-width: 118px;
+  flex-wrap: nowrap;
+  gap: 8px;
+}
+
+.inventory-detail-actions-cell .icon-action {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  padding: 7px;
+}
+
+.serial-number-child-cell,
+.serial-number-child-name {
+  padding-left: 28px !important;
+}
+
+.serial-number-child-name {
+  color: var(--muted);
+  font-size: var(--small-text-size);
+}
+
+.serial-number-child-row--pending input {
+  width: 100%;
+  min-width: 0;
+}
+
+.serial-number-cell input,
+.serial-number-name-cell input {
+  width: 100%;
+  min-width: 120px;
+}
+
+.serial-number-child-row--pending .row-actions {
+  flex-wrap: wrap;
+}
+
 .row-actions,
 .detail-actions {
   display: flex;
@@ -940,6 +989,60 @@ dialog::backdrop {
   justify-content: flex-end;
   gap: 10px;
   margin-top: 5px;
+}
+
+.serial-number-editor {
+  min-width: 0;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-control);
+}
+
+.serial-number-editor legend {
+  padding: 0 6px;
+  font-weight: 700;
+}
+
+.serial-number-editor-heading,
+.serial-number-editor-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr) 34px;
+  align-items: center;
+  gap: 6px;
+}
+
+.serial-number-editor-heading {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.serial-number-editor-list {
+  display: grid;
+  gap: 6px;
+}
+
+.serial-number-editor-row--child {
+  margin-left: 20px;
+}
+
+.serial-number-editor-tools {
+  display: flex;
+  justify-content: center;
+}
+
+.serial-number-display {
+  display: grid;
+  gap: 4px;
+}
+
+.serial-number-display-child {
+  margin-left: 18px;
+  color: var(--muted);
+  font-size: var(--small-text-size);
 }
 
 .inventory-page {

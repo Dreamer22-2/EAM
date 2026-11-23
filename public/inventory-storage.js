@@ -19,6 +19,108 @@ export function omitUndefinedFields(record) {
   );
 }
 
+export async function addChildSerialNumber(transaction, {
+  shardRef,
+  codePrefix,
+  code,
+  serialNumber,
+  name = "",
+}, { serverTimestamp }) {
+  const childSerialNumber = String(serialNumber || "").trim();
+  if (!childSerialNumber) throw new Error("Adj meg egy gyermek sorozatszámot.");
+
+  const snapshot = await transaction.get(shardRef);
+  if (!snapshot.exists()) throw new Error(`A leltári adattár nem található: ${shardRef.id}.`);
+  const data = snapshot.data();
+  if (data.schemaVersion !== INVENTORY_SCHEMA_VERSION) {
+    throw new Error(`A leltári adattár verziója érvénytelen: ${shardRef.id}.`);
+  }
+  const records = data.groups?.[codePrefix] || [];
+  const recordIndex = records.findIndex((record) => record.leltariSzam === code);
+  if (recordIndex < 0) throw new Error(`A leltári tétel nem található: ${code}.`);
+
+  const record = records[recordIndex];
+  const childSerialNumbers = [
+    ...(Array.isArray(record.childSerialNumbers) ? record.childSerialNumbers : []),
+    { serialNumber: childSerialNumber, name: String(name || "").trim() },
+  ];
+  const groups = {
+    ...data.groups,
+    [codePrefix]: records.map((entry, index) => (
+      index === recordIndex
+        ? {
+          ...entry,
+          childSerialNumbers,
+        }
+        : entry
+    )),
+  };
+  if (estimateInventoryShardBytes(groups) > MAX_INVENTORY_SHARD_BYTES) {
+    throw new Error("A gyermek sorozatszám túllépné a leltári dokumentum megengedett méretét.");
+  }
+  transaction.set(shardRef, {
+    ...data,
+    groups,
+    updatedAt: serverTimestamp(),
+  });
+  return childSerialNumbers;
+}
+
+export async function updateInventorySerialNumber(transaction, {
+  shardRef,
+  codePrefix,
+  code,
+  childIndex,
+  serialNumber,
+  name = "",
+}, { serverTimestamp }) {
+  const snapshot = await transaction.get(shardRef);
+  if (!snapshot.exists()) throw new Error(`A leltári adattár nem található: ${shardRef.id}.`);
+  const data = snapshot.data();
+  if (data.schemaVersion !== INVENTORY_SCHEMA_VERSION) {
+    throw new Error(`A leltári adattár verziója érvénytelen: ${shardRef.id}.`);
+  }
+  const records = data.groups?.[codePrefix] || [];
+  const recordIndex = records.findIndex((record) => record.leltariSzam === code);
+  if (recordIndex < 0) throw new Error(`A leltári tétel nem található: ${code}.`);
+
+  const record = records[recordIndex];
+  const normalizedSerialNumber = String(serialNumber ?? "").trim();
+  let updatedRecord;
+  if (childIndex === undefined) {
+    updatedRecord = { ...record, serialNumber: normalizedSerialNumber };
+  } else {
+    const childSerialNumbers = Array.isArray(record.childSerialNumbers)
+      ? [...record.childSerialNumbers]
+      : [];
+    if (!Number.isInteger(childIndex) || childIndex < 0 || childIndex >= childSerialNumbers.length) {
+      throw new Error(`A gyermek sorozatszám nem található: ${code}.`);
+    }
+    childSerialNumbers[childIndex] = {
+      ...childSerialNumbers[childIndex],
+      serialNumber: normalizedSerialNumber,
+      name: String(name || "").trim(),
+    };
+    updatedRecord = { ...record, childSerialNumbers };
+  }
+
+  const groups = {
+    ...data.groups,
+    [codePrefix]: records.map((entry, index) => (
+      index === recordIndex ? updatedRecord : entry
+    )),
+  };
+  if (estimateInventoryShardBytes(groups) > MAX_INVENTORY_SHARD_BYTES) {
+    throw new Error("A sorozatszám-módosítás túllépné a leltári dokumentum megengedett méretét.");
+  }
+  transaction.set(shardRef, {
+    ...data,
+    groups,
+    updatedAt: serverTimestamp(),
+  });
+  return updatedRecord;
+}
+
 export async function updateInventoryRecordTags(transaction, updates, {
   getShardRef,
   serverTimestamp,

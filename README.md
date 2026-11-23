@@ -10,7 +10,9 @@ Cloudflare Worker for compact inventory reads and live exchange rates.
   subtype, price, serial numbers, storage notes, sticker size, and sticker
   count.
 - **Inventory:** search, filter, sort, and view grouped inventory. Open a group
-  to see individual items. Edit or delete groups and items.
+  to see individual items. Edit groups or delete groups and individual items.
+  Add child serial numbers inline; each can have a serial number and an
+  optional label.
 - **Bulk actions:** select individual records or groups, select the entire
   inventory, delete selected items, or change sticker settings.
 - **Import:** read `.xlsx`, `.xls`, and `.csv` files in the browser, map
@@ -130,6 +132,12 @@ They are assigned in order when their count matches the expanded records;
 otherwise imported serial-number fields are left empty. Merged spreadsheet
 inventory-code cells are supported. Importing an existing inventory code
 replaces that record after confirmation.
+
+To add child serial numbers, open an inventory group and click the plus button
+in the item's row. An indented row appears directly below it; enter the child
+serial number and an optional descriptive name, then save. The name is for
+display only. Use the edit button in a parent or child row to change its serial
+number inline; child names can be edited there as well.
 
 ## Stickers and HERMA export
 
