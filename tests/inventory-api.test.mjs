@@ -234,6 +234,7 @@ test("detail payload includes only the selected group's editable item fields", (
         price: 1200,
         currency: "HUF",
         serialNumber: "SN-1",
+        serialNumberNickname: "Polc mögötti",
         placement: "Polc",
         comment: "Megjegyzés",
         stickerCount: 2,
@@ -255,6 +256,7 @@ test("detail payload includes only the selected group's editable item fields", (
   assert.equal(detail.items[0].alTipus, "A");
   assert.equal(detail.items[0].stickerCount, 2);
   assert.equal(detail.items[0].recordId, "record-1");
+  assert.equal(detail.items[0].serialNumberNickname, "Polc mögötti");
   assert.deepEqual(detail.items[0].tags, ["sticker done"]);
   assert.deepEqual(detail.items[0].childSerialNumbers, [
     { serialNumber: "CHILD-1", name: "Battery" },

@@ -121,6 +121,7 @@ const INVENTORY_RECORD_FIELDS = [
   "stickerCount",
   "stickerSize",
   "serialNumber",
+  "serialNumberNickname",
   "childSerialNumbers",
   "placement",
   "comment",

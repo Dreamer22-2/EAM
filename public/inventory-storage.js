@@ -24,7 +24,7 @@ export async function addChildSerialNumber(transaction, {
   codePrefix,
   code,
   serialNumber,
-  name = "",
+  nickname = "",
 }, { serverTimestamp }) {
   const childSerialNumber = String(serialNumber || "").trim();
   if (!childSerialNumber) throw new Error("Adj meg egy gyermek sorozatszámot.");
@@ -42,7 +42,7 @@ export async function addChildSerialNumber(transaction, {
   const record = records[recordIndex];
   const childSerialNumbers = [
     ...(Array.isArray(record.childSerialNumbers) ? record.childSerialNumbers : []),
-    { serialNumber: childSerialNumber, name: String(name || "").trim() },
+    { serialNumber: childSerialNumber, nickname: String(nickname || "").trim() },
   ];
   const groups = {
     ...data.groups,
@@ -72,7 +72,7 @@ export async function updateInventorySerialNumber(transaction, {
   code,
   childIndex,
   serialNumber,
-  name = "",
+  nickname,
 }, { serverTimestamp }) {
   const snapshot = await transaction.get(shardRef);
   if (!snapshot.exists()) throw new Error(`A leltári adattár nem található: ${shardRef.id}.`);
@@ -88,7 +88,11 @@ export async function updateInventorySerialNumber(transaction, {
   const normalizedSerialNumber = String(serialNumber ?? "").trim();
   let updatedRecord;
   if (childIndex === undefined) {
-    updatedRecord = { ...record, serialNumber: normalizedSerialNumber };
+    updatedRecord = {
+      ...record,
+      serialNumber: normalizedSerialNumber,
+      ...(nickname === undefined ? {} : { serialNumberNickname: String(nickname).trim() }),
+    };
   } else {
     const childSerialNumbers = Array.isArray(record.childSerialNumbers)
       ? [...record.childSerialNumbers]
@@ -96,10 +100,11 @@ export async function updateInventorySerialNumber(transaction, {
     if (!Number.isInteger(childIndex) || childIndex < 0 || childIndex >= childSerialNumbers.length) {
       throw new Error(`A gyermek sorozatszám nem található: ${code}.`);
     }
+    const { name: legacyNickname, ...child } = childSerialNumbers[childIndex];
     childSerialNumbers[childIndex] = {
-      ...childSerialNumbers[childIndex],
+      ...child,
       serialNumber: normalizedSerialNumber,
-      name: String(name || "").trim(),
+      nickname: String(nickname ?? legacyNickname ?? "").trim(),
     };
     updatedRecord = { ...record, childSerialNumbers };
   }
@@ -112,6 +117,48 @@ export async function updateInventorySerialNumber(transaction, {
   };
   if (estimateInventoryShardBytes(groups) > MAX_INVENTORY_SHARD_BYTES) {
     throw new Error("A sorozatszám-módosítás túllépné a leltári dokumentum megengedett méretét.");
+  }
+  transaction.set(shardRef, {
+    ...data,
+    groups,
+    updatedAt: serverTimestamp(),
+  });
+  return updatedRecord;
+}
+
+export async function removeChildSerialNumber(transaction, {
+  shardRef,
+  codePrefix,
+  code,
+  childIndex,
+}, { serverTimestamp }) {
+  const snapshot = await transaction.get(shardRef);
+  if (!snapshot.exists()) throw new Error(`A leltári adattár nem található: ${shardRef.id}.`);
+  const data = snapshot.data();
+  if (data.schemaVersion !== INVENTORY_SCHEMA_VERSION) {
+    throw new Error(`A leltári adattár verziója érvénytelen: ${shardRef.id}.`);
+  }
+  const records = data.groups?.[codePrefix] || [];
+  const recordIndex = records.findIndex((record) => record.leltariSzam === code);
+  if (recordIndex < 0) throw new Error(`A leltári tétel nem található: ${code}.`);
+
+  const record = records[recordIndex];
+  const childSerialNumbers = Array.isArray(record.childSerialNumbers)
+    ? [...record.childSerialNumbers]
+    : [];
+  if (!Number.isInteger(childIndex) || childIndex < 0 || childIndex >= childSerialNumbers.length) {
+    throw new Error(`A gyermek sorozatszám nem található: ${code}.`);
+  }
+  childSerialNumbers.splice(childIndex, 1);
+  const updatedRecord = { ...record, childSerialNumbers };
+  const groups = {
+    ...data.groups,
+    [codePrefix]: records.map((entry, index) => (
+      index === recordIndex ? updatedRecord : entry
+    )),
+  };
+  if (estimateInventoryShardBytes(groups) > MAX_INVENTORY_SHARD_BYTES) {
+    throw new Error("A gyermek sorozatszám törlése túllépné a leltári dokumentum megengedett méretét.");
   }
   transaction.set(shardRef, {
     ...data,
