@@ -3036,8 +3036,35 @@ function sortParameterEntryLists(containers) {
   containers.forEach((container) => {
     const rows = [...container.querySelectorAll(":scope > .parameter-entry")];
     rows.sort((firstRow, secondRow) => {
-      const firstName = firstRow.querySelectorAll("input")[1]?.value.trim() || "";
-      const secondName = secondRow.querySelectorAll("input")[1]?.value.trim() || "";
+      const [firstCodeInput, firstNameInput] = firstRow.querySelectorAll("input");
+      const [secondCodeInput, secondNameInput] = secondRow.querySelectorAll("input");
+      const firstCode = firstCodeInput?.value.trim() || "";
+      const secondCode = secondCodeInput?.value.trim() || "";
+      const firstName = firstNameInput?.value.trim() || "";
+      const secondName = secondNameInput?.value.trim() || "";
+
+      const normalizedSpecialNames = new Set([
+        "nem relevans",
+        "not relevant",
+        "general",
+        "altalanos",
+        "ismeretlen",
+        "ismeretlen / altalanos",
+        "egyeni",
+        "egyeni szam",
+        "egyeb",
+        "alapertelmezett",
+        "unknown",
+        "miscellaneous",
+      ]);
+      const getSortPriority = (code, name) => {
+        if (code === "00") return 0;
+        if (normalizedSpecialNames.has(name.normalize("NFKD").replace(/\p{Diacritic}/gu, "").toLocaleLowerCase("hu"))) return 1;
+        return 2;
+      };
+      const firstPriority = getSortPriority(firstCode, firstName);
+      const secondPriority = getSortPriority(secondCode, secondName);
+      if (firstPriority !== secondPriority) return firstPriority - secondPriority;
       if (!firstName && secondName) return 1;
       if (firstName && !secondName) return -1;
       return firstName.localeCompare(secondName, "hu", {
