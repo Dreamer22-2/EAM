@@ -274,6 +274,24 @@ dialog {
   font-size: 20px;
 }
 
+.parameter-card-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 10px;
+}
+
+.parameter-card-heading h3 {
+  margin: 0;
+}
+
+.parameter-sort {
+  flex: 0 0 auto;
+  min-width: 52px;
+  padding: 6px 10px;
+}
+
 .parameter-section h3 {
   margin: 0 0 10px;
   font-size: 18px;

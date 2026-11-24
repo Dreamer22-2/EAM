@@ -3032,6 +3032,31 @@ function readParameterCatalogs() {
   });
 }
 
+function sortParameterEntryLists(containers) {
+  containers.forEach((container) => {
+    const rows = [...container.querySelectorAll(":scope > .parameter-entry")];
+    rows.sort((firstRow, secondRow) => {
+      const firstName = firstRow.querySelectorAll("input")[1]?.value.trim() || "";
+      const secondName = secondRow.querySelectorAll("input")[1]?.value.trim() || "";
+      if (!firstName && secondName) return 1;
+      if (firstName && !secondName) return -1;
+      return firstName.localeCompare(secondName, "hu", {
+        sensitivity: "base",
+        numeric: true,
+      });
+    });
+    container.append(...rows);
+  });
+}
+
+function sortCatalogEntriesByName(key) {
+  readParameterCatalogs();
+  sortParameterEntryLists([document.querySelector(`#parameter-${key}`)]);
+  readParameterCatalogs();
+  parameterStatus.textContent = "A lista név szerint rendezve.";
+  parameterStatus.className = "form-status form-status--success";
+}
+
 async function saveParameterConfig() {
   readParameterCatalogs();
   readParameterRule();
@@ -3091,6 +3116,9 @@ document.querySelector("#parameter-model-select").addEventListener("change", (ev
 });
 document.querySelector("#parameter-rule-mode").addEventListener("change", () => {
   setParameterRuleMode(document.querySelector("#parameter-rule-mode").value);
+});
+document.querySelectorAll(".parameter-sort").forEach((button) => {
+  button.addEventListener("click", () => sortCatalogEntriesByName(button.dataset.catalog));
 });
 document.querySelector("#save-parameters").addEventListener("click", saveParameterConfig);
 renderParameterEditor();
